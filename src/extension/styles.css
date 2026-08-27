@@ -1,0 +1,80 @@
+.rev-root {
+  --rev-width: 72ch;
+  --rev-font: system-ui;
+  --rev-nav-offset: 0px;
+  max-width: var(--rev-width);
+  width: min(var(--rev-width), calc(100vw - var(--rev-nav-offset) - 2rem));
+  margin: 0 auto;
+  font-family: var(--rev-font);
+  line-height: 1.45;
+}
+
+.rev-toolbar {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  position: sticky;
+  top: 0;
+  background: color-mix(in srgb, Canvas 85%, transparent);
+  backdrop-filter: blur(4px);
+  padding: 0.5rem;
+  z-index: 10;
+}
+
+.rev-toolbar button,
+.rev-toolbar select,
+.rev-toolbar input,
+.rev-paragraph-toggle,
+.rev-section-toggle,
+.rev-table-toggle {
+  font: inherit;
+}
+
+.rev-heading-wrap {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.rev-section-body.rev-hidden {
+  display: none;
+}
+
+.rev-paragraph-wrap {
+  margin-block: 0.5rem;
+}
+
+.rev-paragraph-wrap p {
+  margin-block: 0.25rem 1rem;
+}
+
+.rev-prewrap {
+  white-space: pre-wrap;
+}
+
+.rev-diagram,
+.rev-table-wrap pre {
+  font-family: monospace;
+}
+
+.rev-pagebreak {
+  margin: 0.75rem 0;
+}
+
+.rev-pagebreak hr {
+  border: none;
+  border-top: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+}
+
+.rev-table-wrap table {
+  border-collapse: collapse;
+  width: 100%;
+  overflow-x: auto;
+  display: block;
+}
+
+.rev-table-wrap td {
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  padding: 0.2rem 0.45rem;
+}
