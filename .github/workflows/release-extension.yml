@@ -28,7 +28,7 @@ jobs:
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
       - name: Zip built extension
-        run: cd dist && zip -r ../rfc-editor-viewer-dist.zip .
+        run: cd dist && zip -r ../rfc-editor-viewer-${{ steps.pkg.outputs.version }}.zip .
 
       - name: Create release
         uses: softprops/action-gh-release@v2
@@ -36,4 +36,4 @@ jobs:
           tag_name: v${{ steps.pkg.outputs.version }}-${{ github.run_number }}
           name: "${{ github.event.pull_request.title }} (#${{ github.event.pull_request.number }})"
           generate_release_notes: true
-          files: rfc-editor-viewer-dist.zip
+          files: rfc-editor-viewer-${{ steps.pkg.outputs.version }}.zip
