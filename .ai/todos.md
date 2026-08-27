@@ -1,0 +1,8 @@
+- Improve table detection/conversion confidence and support multi-line ASCII tables with per-table mode persistence.
+- Preserve native RFC anchors/hyperlinks more completely when content is restructured.
+- Add stronger page header/footer heuristics across older RFC formats.
+- Expand heading/section parser to build a fully nested section tree from RFC numbering.
+- Respect dynamic nav width changes in real time when auto-hide toggles.
+- Add integration tests using sample RFC pages (including diagrams and tables).
+- Add optional sync storage/remote profile adapter abstraction.
+- Add docs site generation workflow and gh-pages publishing automation.

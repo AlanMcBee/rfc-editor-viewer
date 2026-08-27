@@ -1,0 +1,19 @@
+{
+  "name": "rfc-editor-viewer",
+  "version": "0.1.0",
+  "description": "Chromium (Edge or Chrome) extension to make RFCs easier to read on rfc-editor.org",
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "build": "node scripts/build.mjs",
+    "prepare": "npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "http://localhost:26831/AlanMcBee/rfc-editor-viewer"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "esbuild": "^0.25.9"
+  }
+}

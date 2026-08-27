@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>RFC Viewer Options</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 56rem; margin: 1rem auto; padding: 0 1rem; }
+      fieldset { margin-bottom: 1rem; }
+      label { display: block; margin-bottom: 0.5rem; }
+    </style>
+  </head>
+  <body>
+    <h1>RFC Viewer Options</h1>
+    <fieldset>
+      <legend>Layout</legend>
+      <label>Width preset
+        <select id="widthPreset">
+          <option value="65ch">65ch</option>
+          <option value="72ch">72ch</option>
+          <option value="80ch">80ch</option>
+          <option value="56rem">56rem</option>
+          <option value="100%">100%</option>
+          <option value="custom">Custom</option>
+        </select>
+      </label>
+      <label>Custom width <input id="customWidth" placeholder="e.g. 68ch"></label>
+      <label>Typeface <input id="typeface" placeholder="system-ui"></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Export defaults</legend>
+      <label><input type="checkbox" id="includeCollapsedInExport"> Include collapsed sections</label>
+      <label><input type="checkbox" id="includePageBreaksInExport"> Include page breaks</label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Feature flags</legend>
+      <label><input type="checkbox" id="enabled"> Extension enabled</label>
+      <label><input type="checkbox" id="headingDetection"> Heading detection</label>
+      <label><input type="checkbox" id="paragraphRewrap"> Paragraph rewrap</label>
+      <label><input type="checkbox" id="sectionCollapse"> Section collapse</label>
+      <label><input type="checkbox" id="tableEnhancement"> Table enhancement</label>
+      <label><input type="checkbox" id="pageBreakMarkers"> Page break markers</label>
+      <label><input type="checkbox" id="exportTools"> Export tools</label>
+    </fieldset>
+
+    <button id="save">Save options</button>
+    <p id="status" aria-live="polite"></p>
+    <script src="options.js"></script>
+  </body>
+</html>
