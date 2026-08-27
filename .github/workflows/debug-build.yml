@@ -1,0 +1,33 @@
+name: Debug Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  debug-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+      - run: npm test
+      - run: npm run build:debug
+
+      - id: pkg
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Zip debug build
+        run: cd dist && zip -r ../rfc-editor-viewer-${{ steps.pkg.outputs.version }}-debug.zip .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rfc-editor-viewer-${{ steps.pkg.outputs.version }}-debug-${{ github.run_number }}
+          path: rfc-editor-viewer-${{ steps.pkg.outputs.version }}-debug.zip

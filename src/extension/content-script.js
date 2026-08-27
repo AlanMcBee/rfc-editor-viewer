@@ -1,8 +1,46 @@
 import { DEFAULT_SETTINGS, STORAGE_KEYS, mergeSettings, pageStorageKey, resolvedContentWidth } from '../lib/settings.js';
 import { buildAsciiTableRows, parseRfcText } from '../lib/parser.js';
 import { exportHtml, exportMarkdown } from '../lib/exporter.js';
+import { debugLog } from '../lib/debug.js';
 
 const ROOT_CLASS = 'rev-root';
+
+// rfc-editor.org is a Vue SSR app: mutating its DOM before hydration finishes gets patched away.
+function whenSettled(target, { quietMs = 250, timeoutMs = 5000 } = {}) {
+  return new Promise((resolve) => {
+    let quietTimer;
+
+    const finish = () => {
+      observer.disconnect();
+      clearTimeout(quietTimer);
+      clearTimeout(hardStop);
+      resolve();
+    };
+
+    const observer = new MutationObserver(() => {
+      clearTimeout(quietTimer);
+      quietTimer = setTimeout(finish, quietMs);
+    });
+
+    const hardStop = setTimeout(() => {
+      debugLog('settle wait hit timeout', { timeoutMs });
+      finish();
+    }, timeoutMs);
+
+    observer.observe(target, { childList: true, subtree: true, characterData: true });
+    quietTimer = setTimeout(finish, quietMs);
+  });
+}
+
+function whenLoaded() {
+  if (document.readyState === 'complete') {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    window.addEventListener('load', () => resolve(), { once: true });
+  });
+}
 
 async function getSettings() {
   const key = pageStorageKey(location.href);
@@ -213,6 +251,11 @@ function collapseSection(section, hidden) {
 }
 
 async function processPage() {
+  if (document.querySelector(`.${ROOT_CLASS}`)) {
+    debugLog('already processed, skipping');
+    return;
+  }
+
   const source = document.querySelector('div.rfc-content');
   if (!source) {
     console.warn('RFC Viewer: could not find div.rfc-content');
@@ -222,11 +265,17 @@ async function processPage() {
 
   const settings = await getSettings();
   if (!settings.featureFlags.enabled) {
+    debugLog('disabled by feature flag');
     return;
   }
 
+  await whenLoaded();
+  await whenSettled(source);
+  debugLog('page settled, parsing content');
+
   const blocks = parseRfcText(source.innerText);
   const groups = groupedBlocks(blocks);
+  debugLog('parsed blocks', { blocks: blocks.length, groups: groups.length });
   const exportBlocks = [];
 
   const root = document.createElement('div');
@@ -299,6 +348,7 @@ async function processPage() {
   });
 
   source.replaceChildren(root);
+  debugLog('rendered enhanced content');
   await applyWidth();
   window.addEventListener('resize', applyWidth);
 
