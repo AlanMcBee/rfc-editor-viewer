@@ -308,8 +308,10 @@ async function processPage() {
     chrome.runtime.sendMessage({ type: 'rev.status', ok: false });
     return;
   }
+  debugLog('found rfc-content source', { readyState: document.readyState });
 
   const settings = await getSettings();
+  debugLog('settings loaded', { enabled: settings.featureFlags.enabled });
   if (!settings.featureFlags.enabled) {
     debugLog('disabled by feature flag');
     return;
@@ -321,12 +323,14 @@ async function processPage() {
 
   // Read plain text before non-destructively hiding original content & nav
   const rawText = source.innerText;
+  debugLog('captured plain text', { length: rawText.length });
   source.classList.add('rev-original-hidden');
 
   // Scope to the page's own RFC table-of-contents nav only; a bare 'nav' selector
   // also matches the site header/footer nav and hides them.
   const nativeNavs = document.querySelectorAll('nav[aria-label^="In this RFC"], #sidebar, .sidebar');
   nativeNavs.forEach((el) => el.classList.add('rev-original-hidden'));
+  debugLog('hid native chrome', { navCount: nativeNavs.length });
 
   const existingRoot = document.querySelector(`.${ROOT_CLASS}`);
   if (existingRoot) {
@@ -440,6 +444,46 @@ async function processPage() {
 
   source.after(root);
   debugLog('rendered enhanced content');
+
+  // Nuxt/Vue keeps hydrating chunks of this page well after our initial
+  // "settled" quiet-period check resolves (see the async chunk loads and
+  // "Hydration completed" log that show up afterward). When that late
+  // hydration reconciles this subtree, Vue can silently discard our injected
+  // root and/or un-hide the original content, leaving the page blank. Watch
+  // for that and repair it instead of leaving the user with nothing.
+  const guardParent = source.parentNode;
+  if (guardParent) {
+    const repairIfNeeded = () => {
+      let repaired = false;
+      if (!source.classList.contains('rev-original-hidden')) {
+        source.classList.add('rev-original-hidden');
+        repaired = true;
+      }
+      if (!root.isConnected) {
+        source.after(root);
+        repaired = true;
+      }
+      if (repaired) {
+        debugLog('repaired content after late Vue re-render');
+      }
+    };
+
+    const guardObserver = new MutationObserver(repairIfNeeded);
+    guardObserver.observe(guardParent, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class']
+    });
+
+    // Late Nuxt hydration settles within a few seconds; stop watching after
+    // that so we don't keep an observer running for the life of the tab.
+    setTimeout(() => {
+      guardObserver.disconnect();
+      debugLog('stopped watching for late Vue re-renders');
+    }, 15000);
+  }
+
   await applyWidth();
   window.addEventListener('resize', applyWidth);
 
