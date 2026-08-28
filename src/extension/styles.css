@@ -1,3 +1,7 @@
+.rev-original-hidden {
+  display: none !important;
+}
+
 .rev-root {
   --rev-width: 72ch;
   --rev-font: system-ui;
@@ -19,6 +23,7 @@
   backdrop-filter: blur(4px);
   padding: 0.5rem;
   z-index: 10;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent);
 }
 
 .rev-toolbar button,
@@ -26,8 +31,75 @@
 .rev-toolbar input,
 .rev-paragraph-toggle,
 .rev-section-toggle,
-.rev-table-toggle {
+.rev-table-toggle,
+.rev-nav-toggle {
   font: inherit;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  background: color-mix(in srgb, Canvas 92%, transparent);
+  padding: 0.2rem 0.5rem;
+  cursor: pointer;
+}
+
+.rev-nav-drawer {
+  background: color-mix(in srgb, Canvas 96%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 6px;
+  margin: 0.75rem 0;
+  padding: 0.75rem 1rem;
+  max-height: 60vh;
+  overflow-y: auto;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.rev-nav-drawer.rev-hidden {
+  display: none;
+}
+
+.rev-nav-title {
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  font-size: 1.05rem;
+}
+
+.rev-nav-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.rev-nav-item {
+  margin: 0.25rem 0;
+}
+
+.rev-nav-item a {
+  text-decoration: none;
+  color: inherit;
+}
+
+.rev-nav-item a:hover {
+  text-decoration: underline;
+}
+
+.rev-nav-level-2 {
+  padding-left: 0;
+  font-weight: 500;
+}
+
+.rev-nav-level-3 {
+  padding-left: 1.25rem;
+  font-size: 0.95em;
+}
+
+.rev-nav-level-4 {
+  padding-left: 2.25rem;
+  font-size: 0.9em;
+}
+
+.rev-nav-level-5,
+.rev-nav-level-6 {
+  padding-left: 3.25rem;
+  font-size: 0.85em;
 }
 
 .rev-heading-wrap {
@@ -35,6 +107,17 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 0.75rem;
+  scroll-margin-top: 4rem;
+}
+
+.rev-heading-wrap h1,
+.rev-heading-wrap h2,
+.rev-heading-wrap h3,
+.rev-heading-wrap h4,
+.rev-heading-wrap h5,
+.rev-heading-wrap h6 {
+  scroll-margin-top: 4rem;
+  margin-block: 1rem 0.5rem;
 }
 
 .rev-section-body.rev-hidden {
@@ -54,8 +137,16 @@
 }
 
 .rev-diagram,
-.rev-table-wrap pre {
+.rev-table-wrap pre,
+pre[role="toc"],
+pre.rev-toc {
   font-family: monospace;
+  overflow-x: auto;
+  white-space: pre;
+  background: color-mix(in srgb, Canvas 95%, currentColor 5%);
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  line-height: 1.35;
 }
 
 .rev-pagebreak {

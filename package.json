@@ -1,6 +1,6 @@
 {
   "name": "rfc-editor-viewer",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Chromium (Edge or Chrome) extension to make RFCs easier to read on rfc-editor.org",
   "type": "module",
   "scripts": {
