@@ -22,7 +22,7 @@ await rm(dist, { recursive: true, force: true });
 await mkdir(dist, { recursive: true });
 
 await Promise.all(
-  ['content-script', 'background', 'popup', 'options'].map((name) =>
+  ['content-script', 'background', 'options'].map((name) =>
     build({
       ...common,
       entryPoints: [resolve(root, `src/extension/${name}.js`)],
@@ -39,7 +39,6 @@ if (debug) {
 
 await Promise.all([
   writeFile(resolve(dist, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`),
-  copyFile(resolve(root, 'src/extension/popup.html'), resolve(dist, 'popup.html')),
   copyFile(resolve(root, 'src/extension/options.html'), resolve(dist, 'options.html')),
   copyFile(resolve(root, 'src/extension/styles.css'), resolve(dist, 'styles.css'))
 ]);

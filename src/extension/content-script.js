@@ -4,6 +4,21 @@ import { exportHtml, exportMarkdown } from '../lib/exporter.js';
 import { debugLog } from '../lib/debug.js';
 
 const ROOT_CLASS = 'rev-root';
+const HIDDEN_CLASS = 'rev-original-hidden';
+// The native page already uses ids like "section-1"; prefix ours so in-page
+// anchors resolve to our visible headings instead of the hidden originals.
+const ANCHOR_PREFIX = 'rev-';
+
+const state = {
+  active: false,
+  busy: false,
+  href: location.href,
+  root: null,
+  source: null,
+  hidden: [],
+  exportBlocks: [],
+  applyWidth: null
+};
 
 // rfc-editor.org is a Vue SSR app: mutating its DOM before hydration finishes gets patched away.
 function whenSettled(target, { quietMs = 250, timeoutMs = 5000 } = {}) {
@@ -57,12 +72,20 @@ async function savePageSettings(partialPage) {
   await chrome.storage.local.set({ [key]: { page: next.page } });
 }
 
+function reportStatus(ok) {
+  try {
+    chrome.runtime.sendMessage({ type: 'rev.status', ok, active: state.active });
+  } catch {
+    // Extension context can be torn down during reloads; status is best-effort.
+  }
+}
+
 function createToolbar(settings, applyWidth, toggleNav) {
   const toolbar = document.createElement('div');
   toolbar.className = 'rev-toolbar';
   toolbar.innerHTML = `
-    <button type="button" class="rev-nav-toggle" aria-expanded="false" aria-label="Toggle Table of Contents">Contents</button>
-    <label>Width
+    <button type="button" class="rev-nav-toggle" aria-expanded="false">Contents</button>
+    <label class="rev-width-label">Width
       <select class="rev-width-select">
         <option value="65ch">65ch</option>
         <option value="72ch">72ch</option>
@@ -73,8 +96,18 @@ function createToolbar(settings, applyWidth, toggleNav) {
       </select>
     </label>
     <input class="rev-width-custom" placeholder="72ch" aria-label="Custom width" />
-    <button class="rev-collapse-all">Collapse all</button>
-    <button class="rev-expand-all">Expand all</button>
+    <button type="button" data-command="rev.collapseAll">Collapse all</button>
+    <button type="button" data-command="rev.expandAll">Expand all</button>
+    <details class="rev-menu">
+      <summary title="More actions">&hellip;</summary>
+      <div class="rev-menu-body">
+        <button type="button" data-command="rev.exportMarkdown">Copy Markdown</button>
+        <button type="button" data-command="rev.exportHtml">Copy HTML</button>
+        <button type="button" data-command="rev.toggle">Show original</button>
+        <button type="button" data-command="rev.resetPage">Reset this page</button>
+        <button type="button" data-command="rev.resetAll">Reset all pages</button>
+      </div>
+    </details>
   `;
 
   const select = toolbar.querySelector('.rev-width-select');
@@ -95,11 +128,15 @@ function createToolbar(settings, applyWidth, toggleNav) {
     applyWidth();
   });
 
-  if (navBtn && toggleNav) {
-    navBtn.addEventListener('click', () => {
-      toggleNav();
-    });
-  }
+  navBtn.addEventListener('click', () => toggleNav());
+
+  toolbar.addEventListener('click', (event) => {
+    const command = event.target.closest('button[data-command]')?.dataset.command;
+    if (command) {
+      toolbar.querySelector('.rev-menu')?.removeAttribute('open');
+      runCommand(command);
+    }
+  });
 
   return toolbar;
 }
@@ -117,20 +154,23 @@ function createSubstituteNav(groups, onNavigate) {
   const list = document.createElement('ul');
   list.className = 'rev-nav-list';
 
+  let entries = 0;
   groups.forEach((group) => {
     if (!group.heading) {
       return;
     }
+    entries += 1;
+    const targetId = `${ANCHOR_PREFIX}${group.heading.id}`;
     const li = document.createElement('li');
     li.className = `rev-nav-item rev-nav-level-${group.heading.level}`;
 
     const a = document.createElement('a');
-    a.href = `#${group.heading.id}`;
+    a.href = `#${targetId}`;
     a.textContent = group.heading.text;
     a.addEventListener('click', (e) => {
       e.preventDefault();
-      history.pushState(null, '', `#${group.heading.id}`);
-      onNavigate(group.heading.id);
+      history.pushState(null, '', `#${targetId}`);
+      onNavigate(targetId);
     });
 
     li.append(a);
@@ -138,26 +178,8 @@ function createSubstituteNav(groups, onNavigate) {
   });
 
   nav.append(list);
+  debugLog('built substitute nav', { entries });
   return nav;
-}
-
-function visibleNavWidth() {
-  const nav = document.querySelector('nav');
-  if (!nav) {
-    return 0;
-  }
-
-  const styles = getComputedStyle(nav);
-  if (styles.display === 'none' || styles.visibility === 'hidden') {
-    return 0;
-  }
-
-  const rect = nav.getBoundingClientRect();
-  if (rect.width < 1 || rect.right <= 0 || rect.left >= window.innerWidth) {
-    return 0;
-  }
-
-  return rect.width;
 }
 
 function groupedBlocks(rawBlocks) {
@@ -201,14 +223,14 @@ function renderBlock(block, index, settings, persistParagraphMode, persistTableM
 
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'rev-paragraph-toggle';
-    button.textContent = wrapped ? 'Keep line breaks' : 'Rewrap';
-    button.setAttribute('aria-pressed', String(!wrapped));
+    button.className = 'rev-affordance rev-paragraph-toggle';
 
     const applyParagraphMode = (mode) => {
       p.textContent = mode ? block.text : block.originalText;
       p.classList.toggle('rev-prewrap', !mode);
-      button.textContent = mode ? 'Keep line breaks' : 'Rewrap';
+      button.textContent = mode ? '\u21B5' : '\u00B6';
+      button.title = mode ? 'Keep original line breaks' : 'Rewrap paragraph';
+      button.setAttribute('aria-label', button.title);
       button.setAttribute('aria-pressed', String(!mode));
     };
 
@@ -233,13 +255,13 @@ function renderBlock(block, index, settings, persistParagraphMode, persistTableM
 
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'rev-table-toggle';
+    button.className = 'rev-affordance rev-table-toggle';
 
     const pre = document.createElement('pre');
     pre.textContent = block.text;
 
     const htmlRows = buildAsciiTableRows(block.lines ?? [block.text]);
-    const renderMode = async (nextMode) => {
+    const renderMode = (nextMode) => {
       wrapper.replaceChildren(button);
       if (nextMode === 'table' && htmlRows) {
         const table = document.createElement('table');
@@ -257,18 +279,21 @@ function renderBlock(block, index, settings, persistParagraphMode, persistTableM
         wrapper.append(pre);
       }
       if (htmlRows) {
-        button.textContent = nextMode === 'mono' ? 'View as table' : 'View as monospace';
+        button.textContent = nextMode === 'mono' ? '\u25A6' : '\u2261';
+        button.title = nextMode === 'mono' ? 'View as table' : 'View as monospace';
       } else {
-        button.textContent = 'Monospace only';
+        button.textContent = '\u2261';
+        button.title = 'Monospace only';
         button.disabled = true;
       }
+      button.setAttribute('aria-label', button.title);
     };
 
     button.addEventListener('click', async () => {
       const next = (settings.page.tableModes[key] ?? 'mono') === 'mono' ? 'table' : 'mono';
       settings.page.tableModes[key] = next;
       await persistTableMode(key, next);
-      await renderMode(next);
+      renderMode(next);
     });
 
     renderMode(mode);
@@ -291,57 +316,135 @@ function collapseSection(section, hidden) {
   section.querySelector('.rev-section-body')?.classList.toggle('rev-hidden', hidden);
   const btn = section.querySelector('.rev-section-toggle');
   if (btn) {
-    btn.textContent = hidden ? 'Expand section' : 'Collapse section';
+    btn.textContent = hidden ? '+' : '\u2212';
+    btn.title = hidden ? 'Expand section' : 'Collapse section';
+    btn.setAttribute('aria-label', btn.title);
     btn.setAttribute('aria-expanded', String(!hidden));
   }
 }
 
-async function processPage() {
-  if (document.querySelector(`.${ROOT_CLASS}`)) {
-    debugLog('already processed, skipping');
+function hideOriginal(el) {
+  if (el && !el.classList.contains(HIDDEN_CLASS)) {
+    el.classList.add(HIDDEN_CLASS);
+    state.hidden.push(el);
+  }
+}
+
+// The site's own article column is pinned to a fixed narrow width, so mount
+// outside it and let the toolbar's width control do the constraining.
+function findMountHost(source) {
+  return document.querySelector('main#main') || document.querySelector('main') || source.parentNode;
+}
+
+// The site paints its theme on ancestor elements; copy that exact color so our
+// sticky toolbar and hover affordances don't sit on a mismatched panel.
+function pageBackgroundColor(from) {
+  let el = from;
+  while (el && el !== document.documentElement) {
+    const bg = getComputedStyle(el).backgroundColor;
+    if (bg && bg !== 'transparent' && !bg.startsWith('rgba(0, 0, 0, 0')) {
+      return bg;
+    }
+    el = el.parentElement;
+  }
+  return getComputedStyle(document.documentElement).backgroundColor;
+}
+
+function blockHistogram(blocks) {
+  return blocks.reduce((acc, block) => {
+    acc[block.kind] = (acc[block.kind] ?? 0) + 1;
+    return acc;
+  }, {});
+}
+
+function scrollToAnchor(id) {
+  if (!id || !state.root) {
+    return;
+  }
+  const clean = id.replace(/^#/, '');
+  const el =
+    state.root.querySelector(`#${CSS.escape(`${ANCHOR_PREFIX}${clean}`)}`) ||
+    state.root.querySelector(`#${CSS.escape(clean)}`);
+
+  if (!el) {
+    debugLog('anchor not found in enhanced content', { id: clean });
     return;
   }
 
+  const section = el.closest('.rev-section');
+  if (section) {
+    collapseSection(section, false);
+  }
+  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function restore(reason) {
+  if (!state.active && !state.root) {
+    return;
+  }
+  state.hidden.forEach((el) => el.classList.remove(HIDDEN_CLASS));
+  state.hidden = [];
+  state.root?.remove();
+  state.root = null;
+  state.source = null;
+  state.exportBlocks = [];
+  state.applyWidth = null;
+  state.active = false;
+  debugLog('restored original page', { reason });
+  reportStatus(true);
+}
+
+async function enhance(reason) {
   const source = document.querySelector('div.rfc-content');
   if (!source) {
-    console.warn('RFC Viewer: could not find div.rfc-content');
-    chrome.runtime.sendMessage({ type: 'rev.status', ok: false });
+    debugLog('no div.rfc-content on this page', { reason, url: location.href });
     return;
   }
-  debugLog('found rfc-content source', { readyState: document.readyState });
 
   const settings = await getSettings();
-  debugLog('settings loaded', { enabled: settings.featureFlags.enabled });
-  if (!settings.featureFlags.enabled) {
-    debugLog('disabled by feature flag');
-    return;
-  }
+  debugLog('settings loaded', {
+    reason,
+    enabled: settings.featureFlags.enabled,
+    pageEnhanced: settings.page.enhanced,
+    widthPreset: settings.page.widthPreset
+  });
 
   await whenLoaded();
   await whenSettled(source);
-  debugLog('page settled, parsing content');
 
-  // Read plain text before non-destructively hiding original content & nav
-  const rawText = source.innerText;
-  debugLog('captured plain text', { length: rawText.length });
-  source.classList.add('rev-original-hidden');
-
-  // Scope to the page's own RFC table-of-contents nav only; a bare 'nav' selector
-  // also matches the site header/footer nav and hides them.
-  const nativeNavs = document.querySelectorAll('nav[aria-label^="In this RFC"], #sidebar, .sidebar');
-  nativeNavs.forEach((el) => el.classList.add('rev-original-hidden'));
-  debugLog('hid native chrome', { navCount: nativeNavs.length });
-
-  const existingRoot = document.querySelector(`.${ROOT_CLASS}`);
-  if (existingRoot) {
-    existingRoot.remove();
+  if (!source.isConnected) {
+    debugLog('source detached while waiting for the page to settle');
+    return;
   }
 
+  const rawText = source.innerText;
   const blocks = parseRfcText(rawText);
   const groups = groupedBlocks(blocks);
-  debugLog('parsed blocks', { blocks: blocks.length, groups: groups.length });
-  const exportBlocks = [];
+  debugLog('parsed rfc text', {
+    chars: rawText.length,
+    lines: rawText.split('\n').length,
+    blocks: blocks.length,
+    kinds: blockHistogram(blocks),
+    groups: groups.length,
+    headings: groups.filter((group) => group.heading).length
+  });
 
+  hideOriginal(source);
+
+  const container = source.closest('.rfc-container');
+  const tocNav = document.querySelector('nav[aria-label^="In this RFC"]');
+  if (tocNav) {
+    const sidebar = container ? Array.from(container.children).find((child) => child.contains(tocNav)) : null;
+    hideOriginal(sidebar || tocNav);
+  }
+  debugLog('hid native chrome', {
+    hiddenCount: state.hidden.length,
+    foundContainer: Boolean(container),
+    foundTocNav: Boolean(tocNav),
+    theme: document.documentElement.classList.contains('dark') ? 'dark' : 'light'
+  });
+
+  const exportBlocks = [];
   const root = document.createElement('div');
   root.className = ROOT_CLASS;
   root.setAttribute('role', 'region');
@@ -349,24 +452,16 @@ async function processPage() {
 
   const applyWidth = async () => {
     const fresh = await getSettings();
-    root.style.setProperty('--rev-width', resolvedContentWidth(fresh));
-    root.style.setProperty('--rev-nav-offset', '0px');
+    const width = resolvedContentWidth(fresh);
+    const background = pageBackgroundColor(root.parentElement);
+    root.style.setProperty('--rev-width', width);
     root.style.setProperty('--rev-font', fresh.page.typeface || 'system-ui');
-  };
-
-  const scrollToAnchor = (id) => {
-    if (!id) {
-      return;
-    }
-    const cleanId = id.replace(/^#/, '');
-    const el = document.getElementById(cleanId);
-    if (el) {
-      const section = el.closest('.rev-section');
-      if (section) {
-        collapseSection(section, false);
-      }
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
+    root.style.setProperty('--rev-bg', background);
+    debugLog('applied appearance', {
+      width,
+      background,
+      theme: document.documentElement.classList.contains('dark') ? 'dark' : 'light'
+    });
   };
 
   let substituteNav = null;
@@ -375,26 +470,17 @@ async function processPage() {
       return;
     }
     const isHidden = substituteNav.classList.toggle('rev-hidden');
-    const navBtn = toolbar.querySelector('.rev-nav-toggle');
-    if (navBtn) {
-      navBtn.setAttribute('aria-expanded', String(!isHidden));
-    }
+    toolbar.querySelector('.rev-nav-toggle')?.setAttribute('aria-expanded', String(!isHidden));
   };
 
   const toolbar = createToolbar(settings, applyWidth, toggleNav);
   root.append(toolbar);
 
-  substituteNav = createSubstituteNav(groups, (targetId) => {
-    scrollToAnchor(targetId);
-  });
+  substituteNav = createSubstituteNav(groups, scrollToAnchor);
   root.append(substituteNav);
 
-  const persistParagraphMode = async (key, mode) => {
-    await savePageSettings({ paragraphModes: { [key]: mode } });
-  };
-  const persistTableMode = async (key, mode) => {
-    await savePageSettings({ tableModes: { [key]: mode } });
-  };
+  const persistParagraphMode = (key, mode) => savePageSettings({ paragraphModes: { [key]: mode } });
+  const persistTableMode = (key, mode) => savePageSettings({ tableModes: { [key]: mode } });
 
   groups.forEach((group, groupIndex) => {
     const section = document.createElement('section');
@@ -403,14 +489,13 @@ async function processPage() {
 
     if (group.heading) {
       const h = document.createElement(`h${Math.max(1, Math.min(6, group.heading.level))}`);
-      h.id = group.heading.id;
+      h.id = `${ANCHOR_PREFIX}${group.heading.id}`;
       h.textContent = group.heading.text;
 
       const collapse = document.createElement('button');
       collapse.type = 'button';
-      collapse.className = 'rev-section-toggle';
+      collapse.className = 'rev-affordance rev-section-toggle';
       collapse.setAttribute('aria-expanded', 'true');
-      collapse.textContent = 'Collapse section';
 
       collapse.addEventListener('click', async () => {
         const key = `s${groupIndex}`;
@@ -437,187 +522,205 @@ async function processPage() {
     });
 
     section.append(body);
-    const key = `s${groupIndex}`;
-    collapseSection(section, Boolean(settings.page.collapsedSections[key]));
+    collapseSection(section, Boolean(settings.page.collapsedSections[`s${groupIndex}`]));
     root.append(section);
   });
 
-  source.after(root);
-  debugLog('rendered enhanced content');
+  const host = findMountHost(source);
+  host.append(root);
 
-  // Nuxt/Vue keeps hydrating chunks of this page well after our initial
-  // "settled" quiet-period check resolves (see the async chunk loads and
-  // "Hydration completed" log that show up afterward). When that late
-  // hydration reconciles this subtree, Vue can silently discard our injected
-  // root and/or un-hide the original content, leaving the page blank. Watch
-  // for that and repair it instead of leaving the user with nothing.
-  const guardParent = source.parentNode;
-  if (guardParent) {
-    const repairIfNeeded = () => {
-      let repaired = false;
-      if (!source.classList.contains('rev-original-hidden')) {
-        source.classList.add('rev-original-hidden');
-        repaired = true;
-      }
-      if (!root.isConnected) {
-        source.after(root);
-        repaired = true;
-      }
-      if (repaired) {
-        debugLog('repaired content after late Vue re-render');
-      }
-    };
-
-    const guardObserver = new MutationObserver(repairIfNeeded);
-    guardObserver.observe(guardParent, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['class']
-    });
-
-    // Late Nuxt hydration settles within a few seconds; stop watching after
-    // that so we don't keep an observer running for the life of the tab.
-    setTimeout(() => {
-      guardObserver.disconnect();
-      debugLog('stopped watching for late Vue re-renders');
-    }, 15000);
-  }
-
-  await applyWidth();
-  window.addEventListener('resize', applyWidth);
+  state.root = root;
+  state.source = source;
+  state.exportBlocks = exportBlocks;
+  state.applyWidth = applyWidth;
+  state.active = true;
+  debugLog('rendered enhanced content', { host: host.tagName.toLowerCase(), sections: groups.length });
 
   root.addEventListener('click', (e) => {
-    const link = e.target.closest('a[href^="#"]');
-    if (link) {
-      const href = link.getAttribute('href');
-      if (href && href.startsWith('#')) {
-        e.preventDefault();
-        const targetId = href.slice(1);
-        history.pushState(null, '', href);
-        scrollToAnchor(targetId);
-      }
+    const href = e.target.closest('a[href^="#"]')?.getAttribute('href');
+    if (href) {
+      e.preventDefault();
+      history.pushState(null, '', href);
+      scrollToAnchor(href.slice(1));
     }
   });
 
-  window.addEventListener('hashchange', () => {
-    if (location.hash) {
-      scrollToAnchor(location.hash);
-    }
-  });
-
+  await applyWidth();
   if (location.hash) {
-    setTimeout(() => {
-      scrollToAnchor(location.hash);
-    }, 100);
+    setTimeout(() => scrollToAnchor(location.hash), 100);
   }
 
-  toolbar.querySelector('.rev-collapse-all')?.addEventListener('click', async () => {
-    const updates = {};
-    root.querySelectorAll('.rev-section').forEach((section) => {
-      collapseSection(section, true);
-      updates[section.dataset.sectionKey] = true;
-    });
-    await savePageSettings({ collapsedSections: updates });
+  reportStatus(true);
+}
+
+async function setSectionsCollapsed(collapsed) {
+  if (!state.root) {
+    return;
+  }
+  const updates = {};
+  state.root.querySelectorAll('.rev-section').forEach((section) => {
+    collapseSection(section, collapsed);
+    updates[section.dataset.sectionKey] = collapsed;
   });
+  await savePageSettings({ collapsedSections: updates });
+}
 
-  toolbar.querySelector('.rev-expand-all')?.addEventListener('click', async () => {
-    const updates = {};
-    root.querySelectorAll('.rev-section').forEach((section) => {
-      collapseSection(section, false);
-      updates[section.dataset.sectionKey] = false;
-    });
-    await savePageSettings({ collapsedSections: updates });
-  });
+async function copyExport(kind) {
+  if (!state.exportBlocks.length) {
+    debugLog('export requested with no enhanced content', { kind });
+    return;
+  }
+  const latest = await getSettings();
+  const payload = {
+    title: document.title,
+    sourceUrl: location.href,
+    includeCollapsed: latest.page.includeCollapsedInExport,
+    includePageBreaks: latest.page.includePageBreaksInExport,
+    blocks: state.exportBlocks.map((block) => ({
+      ...block,
+      hidden: Boolean(latest.page.collapsedSections[block.sectionKey])
+    }))
+  };
+  const text = kind === 'markdown' ? exportMarkdown(payload) : exportHtml(payload);
+  await navigator.clipboard.writeText(text);
+  debugLog('copied export to clipboard', { kind, chars: text.length });
+}
 
-  chrome.runtime.onMessage.addListener(async (message) => {
-    if (message?.type === 'rev.collapseAll') {
-      const updates = {};
-      root.querySelectorAll('.rev-section').forEach((section) => {
-        collapseSection(section, true);
-        updates[section.dataset.sectionKey] = true;
-      });
-      await savePageSettings({ collapsedSections: updates });
-      return;
+async function toggle() {
+  if (state.busy) {
+    debugLog('toggle ignored while busy');
+    return;
+  }
+  state.busy = true;
+  try {
+    if (state.active) {
+      restore('user toggle');
+      await savePageSettings({ enhanced: false });
+    } else {
+      await savePageSettings({ enhanced: true });
+      await enhance('user toggle');
     }
+  } finally {
+    state.busy = false;
+  }
+  reportStatus(true);
+}
 
-    if (message?.type === 'rev.expandAll') {
-      const updates = {};
-      root.querySelectorAll('.rev-section').forEach((section) => {
-        collapseSection(section, false);
-        updates[section.dataset.sectionKey] = false;
-      });
-      await savePageSettings({ collapsedSections: updates });
+async function runCommand(command) {
+  debugLog('running command', { command, active: state.active });
+  switch (command) {
+    case 'rev.toggle':
+      await toggle();
       return;
-    }
-
-    if (message?.type === 'rev.resetPage') {
+    case 'rev.collapseAll':
+      await setSectionsCollapsed(true);
+      return;
+    case 'rev.expandAll':
+      await setSectionsCollapsed(false);
+      return;
+    case 'rev.exportMarkdown':
+      await copyExport('markdown');
+      return;
+    case 'rev.exportHtml':
+      await copyExport('html');
+      return;
+    case 'rev.resetPage':
       await chrome.storage.local.remove(pageStorageKey(location.href));
       location.reload();
       return;
-    }
-
-    if (message?.type === 'rev.resetAll') {
+    case 'rev.resetAll': {
       const all = await chrome.storage.local.get(null);
       const pageKeys = Object.keys(all).filter((key) => key.startsWith(STORAGE_KEYS.PAGE_PREFIX));
       await chrome.storage.local.remove(pageKeys);
       location.reload();
       return;
     }
+    default:
+      debugLog('unknown command', { command });
+  }
+}
 
-    if (message?.type === 'rev.exportMarkdown') {
-      const latest = await getSettings();
-      const markdown = exportMarkdown({
-        title: document.title,
-        sourceUrl: location.href,
-        includeCollapsed: latest.page.includeCollapsedInExport,
-        includePageBreaks: latest.page.includePageBreaksInExport,
-        blocks: exportBlocks.map((block) => ({
-          ...block,
-          hidden: Boolean(latest.page.collapsedSections[block.sectionKey])
-        }))
-      });
-      await navigator.clipboard.writeText(markdown);
+// Nuxt hydrates lazily and this is a single-page app, so the RFC body can appear,
+// disappear, or be swapped long after our first attempt. Re-check on DOM churn
+// instead of relying on a one-shot run at document_end.
+async function reconcile(reason) {
+  if (state.busy) {
+    return;
+  }
+  state.busy = true;
+  try {
+    if (state.href !== location.href) {
+      debugLog('url changed', { from: state.href, to: location.href });
+      state.href = location.href;
+      restore('navigation');
+    }
+
+    const settings = await getSettings();
+    if (!settings.featureFlags.enabled || settings.page.enhanced === false) {
+      restore('turned off');
       return;
     }
 
-    if (message?.type === 'rev.exportHtml') {
-      const latest = await getSettings();
-      const html = exportHtml({
-        title: document.title,
-        sourceUrl: location.href,
-        includeCollapsed: latest.page.includeCollapsedInExport,
-        includePageBreaks: latest.page.includePageBreaksInExport,
-        blocks: exportBlocks.map((block) => ({
-          ...block,
-          hidden: Boolean(latest.page.collapsedSections[block.sectionKey])
-        }))
-      });
-      await navigator.clipboard.writeText(html);
+    if (state.active) {
+      if (state.root?.isConnected && state.source?.isConnected) {
+        return;
+      }
+      debugLog('enhanced content was removed by the page; rebuilding');
+      restore('content lost');
+    }
+
+    if (document.querySelector('div.rfc-content')) {
+      await enhance(reason);
+    }
+  } catch (error) {
+    console.error('RFC Viewer failed to process this page', error);
+    reportStatus(false);
+  } finally {
+    state.busy = false;
+  }
+}
+
+function watchPage() {
+  let timer;
+  const schedule = (reason) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => reconcile(reason), 300);
+  };
+
+  new MutationObserver(() => schedule('dom change')).observe(document.documentElement, {
+    childList: true,
+    subtree: true
+  });
+
+  window.addEventListener('popstate', () => schedule('popstate'));
+  window.addEventListener('hashchange', () => {
+    if (state.active && location.hash) {
+      scrollToAnchor(location.hash);
     }
   });
 
-  chrome.storage.onChanged.addListener(async (changes, areaName) => {
+  new MutationObserver(() => state.applyWidth?.()).observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['class']
+  });
+
+  chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== 'local') {
       return;
     }
-
-    const currentKey = pageStorageKey(location.href);
-    if (changes[STORAGE_KEYS.GLOBAL] || changes[currentKey]) {
-      await applyWidth();
+    if (changes[STORAGE_KEYS.GLOBAL] || changes[pageStorageKey(location.href)]) {
+      state.applyWidth?.();
+      schedule('settings change');
     }
   });
-
-  chrome.runtime.sendMessage({ type: 'rev.status', ok: true });
 }
 
-processPage().catch((error) => {
-  console.error('RFC Viewer failed to process this page', error);
-  chrome.runtime.sendMessage({ type: 'rev.status', ok: false });
-
-  const notice = document.createElement('div');
-  notice.textContent = 'RFC Viewer failed to process this RFC. See browser console for details.';
-  notice.setAttribute('role', 'status');
-  notice.style.cssText = 'position:fixed;bottom:1rem;right:1rem;background:#b00020;color:white;padding:0.5rem 0.75rem;z-index:999999;';
-  document.body.append(notice);
+chrome.runtime.onMessage.addListener((message) => {
+  if (typeof message?.type === 'string' && message.type !== 'rev.status') {
+    runCommand(message.type);
+  }
+  return false;
 });
+
+watchPage();
+reconcile('startup');

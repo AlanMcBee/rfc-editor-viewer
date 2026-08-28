@@ -2,48 +2,152 @@
   display: none !important;
 }
 
+/* rfc-editor.org switches themes with a class on <html>, not prefers-color-scheme,
+   so system colors like Canvas would give us light chrome on a dark page. */
 .rev-root {
   --rev-width: 72ch;
   --rev-font: system-ui;
-  --rev-nav-offset: 0px;
+  --rev-fg: #1a1a1a;
+  --rev-bg: #ffffff;
+  --rev-muted: #6b7280;
+  --rev-line: rgba(0, 0, 0, 0.14);
+  --rev-surface: rgba(0, 0, 0, 0.04);
+  --rev-accent: #1d4ed8;
   max-width: var(--rev-width);
-  width: min(var(--rev-width), calc(100vw - var(--rev-nav-offset) - 2rem));
   margin: 0 auto;
+  padding: 0 1rem 3rem;
+  color: var(--rev-fg);
   font-family: var(--rev-font);
   line-height: 1.45;
 }
 
+html.dark .rev-root {
+  --rev-fg: #e6e9f0;
+  --rev-bg: #05070f;
+  --rev-muted: #93a0b8;
+  --rev-line: rgba(255, 255, 255, 0.18);
+  --rev-surface: rgba(255, 255, 255, 0.06);
+  --rev-accent: #7fb2ff;
+}
+
 .rev-toolbar {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.4rem;
+  align-items: center;
   flex-wrap: wrap;
   position: sticky;
   top: 0;
-  background: color-mix(in srgb, Canvas 85%, transparent);
-  backdrop-filter: blur(4px);
-  padding: 0.5rem;
+  background: var(--rev-bg);
+  padding: 0.35rem 0;
+  margin-bottom: 0.5rem;
   z-index: 10;
-  border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  font-size: 0.8rem;
+  border-bottom: 1px solid var(--rev-line);
+}
+
+html.dark .rev-toolbar {
+  background: var(--rev-bg);
 }
 
 .rev-toolbar button,
 .rev-toolbar select,
 .rev-toolbar input,
-.rev-paragraph-toggle,
-.rev-section-toggle,
-.rev-table-toggle,
-.rev-nav-toggle {
+.rev-menu > summary {
   font: inherit;
+  color: var(--rev-muted);
   border-radius: 4px;
-  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
-  background: color-mix(in srgb, Canvas 92%, transparent);
-  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--rev-line);
+  background: transparent;
+  padding: 0.15rem 0.45rem;
   cursor: pointer;
 }
 
+.rev-toolbar input {
+  width: 7ch;
+}
+
+.rev-toolbar button:hover,
+.rev-menu > summary:hover {
+  color: var(--rev-fg);
+  background: var(--rev-surface);
+}
+
+.rev-width-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--rev-muted);
+}
+
+.rev-menu {
+  position: relative;
+}
+
+.rev-menu > summary {
+  list-style: none;
+  display: inline-block;
+  line-height: 1.2;
+}
+
+.rev-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.rev-menu-body {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.25rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.35rem;
+  min-width: 12rem;
+  background: var(--rev-bg);
+  border: 1px solid var(--rev-line);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  z-index: 20;
+}
+
+html.dark .rev-menu-body {
+  background: var(--rev-bg);
+}
+
+.rev-menu-body button {
+  text-align: left;
+  border-color: transparent;
+}
+
+/* Inline controls stay out of the way until the block they belong to is hovered. */
+.rev-affordance {
+  font: inherit;
+  font-size: 0.75rem;
+  line-height: 1;
+  color: var(--rev-muted);
+  background: var(--rev-bg);
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 0.1rem 0.3rem;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease-in-out;
+}
+
+.rev-affordance:disabled {
+  cursor: default;
+}
+
+.rev-paragraph-wrap:hover > .rev-affordance,
+.rev-table-wrap:hover > .rev-affordance,
+.rev-heading-wrap:hover > .rev-affordance,
+.rev-affordance:focus-visible {
+  opacity: 1;
+  border-color: var(--rev-line);
+}
+
 .rev-nav-drawer {
-  background: color-mix(in srgb, Canvas 96%, transparent);
-  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  background: var(--rev-surface);
+  border: 1px solid var(--rev-line);
   border-radius: 6px;
   margin: 0.75rem 0;
   padding: 0.75rem 1rem;
@@ -74,7 +178,7 @@
 
 .rev-nav-item a {
   text-decoration: none;
-  color: inherit;
+  color: var(--rev-accent);
 }
 
 .rev-nav-item a:hover {
@@ -125,7 +229,14 @@
 }
 
 .rev-paragraph-wrap {
+  position: relative;
   margin-block: 0.5rem;
+}
+
+.rev-paragraph-wrap > .rev-affordance {
+  position: absolute;
+  top: 0;
+  right: 0;
 }
 
 .rev-paragraph-wrap p {
@@ -136,14 +247,25 @@
   white-space: pre-wrap;
 }
 
+.rev-table-wrap {
+  position: relative;
+}
+
+.rev-table-wrap > .rev-affordance {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  z-index: 1;
+}
+
 .rev-diagram,
 .rev-table-wrap pre,
 pre[role="toc"],
 pre.rev-toc {
-  font-family: monospace;
+  font-family: ui-monospace, monospace;
   overflow-x: auto;
   white-space: pre;
-  background: color-mix(in srgb, Canvas 95%, currentColor 5%);
+  background: var(--rev-surface);
   padding: 0.5rem 0.75rem;
   border-radius: 4px;
   line-height: 1.35;
@@ -155,7 +277,7 @@ pre.rev-toc {
 
 .rev-pagebreak hr {
   border: none;
-  border-top: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-top: 1px solid var(--rev-line);
 }
 
 .rev-table-wrap table {
@@ -166,6 +288,6 @@ pre.rev-toc {
 }
 
 .rev-table-wrap td {
-  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  border: 1px solid var(--rev-line);
   padding: 0.2rem 0.45rem;
 }
