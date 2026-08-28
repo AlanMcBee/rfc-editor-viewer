@@ -5,43 +5,6 @@ import { debugLog } from '../lib/debug.js';
 
 const ROOT_CLASS = 'rev-root';
 
-// rfc-editor.org is a Vue SSR app: mutating its DOM before hydration finishes gets patched away.
-function whenSettled(target, { quietMs = 250, timeoutMs = 5000 } = {}) {
-  return new Promise((resolve) => {
-    let quietTimer;
-
-    const finish = () => {
-      observer.disconnect();
-      clearTimeout(quietTimer);
-      clearTimeout(hardStop);
-      resolve();
-    };
-
-    const observer = new MutationObserver(() => {
-      clearTimeout(quietTimer);
-      quietTimer = setTimeout(finish, quietMs);
-    });
-
-    const hardStop = setTimeout(() => {
-      debugLog('settle wait hit timeout', { timeoutMs });
-      finish();
-    }, timeoutMs);
-
-    observer.observe(target, { childList: true, subtree: true, characterData: true });
-    quietTimer = setTimeout(finish, quietMs);
-  });
-}
-
-function whenLoaded() {
-  if (document.readyState === 'complete') {
-    return Promise.resolve();
-  }
-
-  return new Promise((resolve) => {
-    window.addEventListener('load', () => resolve(), { once: true });
-  });
-}
-
 async function getSettings() {
   const key = pageStorageKey(location.href);
   const values = await chrome.storage.local.get([STORAGE_KEYS.GLOBAL, key]);
@@ -315,13 +278,6 @@ async function processPage() {
     return;
   }
 
-<<<<<<< Updated upstream
-  await whenLoaded();
-  await whenSettled(source);
-  debugLog('page settled, parsing content');
-
-  const blocks = parseRfcText(source.innerText);
-=======
   // Read plain text before non-destructively hiding original content & nav
   const rawText = source.innerText;
   source.classList.add('rev-original-hidden');
@@ -335,7 +291,6 @@ async function processPage() {
   }
 
   const blocks = parseRfcText(rawText);
->>>>>>> Stashed changes
   const groups = groupedBlocks(blocks);
   debugLog('parsed blocks', { blocks: blocks.length, groups: groups.length });
   const exportBlocks = [];
@@ -440,12 +395,8 @@ async function processPage() {
     root.append(section);
   });
 
-<<<<<<< Updated upstream
-  source.replaceChildren(root);
-  debugLog('rendered enhanced content');
-=======
   source.after(root);
->>>>>>> Stashed changes
+  debugLog('rendered enhanced content');
   await applyWidth();
   window.addEventListener('resize', applyWidth);
 
