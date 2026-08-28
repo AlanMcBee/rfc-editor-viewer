@@ -51,12 +51,12 @@ function matchNumberedHeading(line) {
 
 function matchAppendixHeading(line) {
   const trimmed = line.trim();
-  const match = trimmed.match(/^(?:Appendix\s+)?([A-Z](?:\.\d+)*)\.?\s{1,}(.+)$/i);
+  const match = trimmed.match(/^(?:Appendix\s+([A-Z](?:\.\d+)*)\.?|([A-Z](?:\.\d+)*)\.)\s+(.+)$/);
   if (!match) {
     return null;
   }
-  const app = match[1].toUpperCase();
-  const title = match[2].trim();
+  const app = (match[1] || match[2]).toUpperCase();
+  const title = match[3].trim();
   if (/\.\s*\.\s*\.\s*\d+$/.test(title)) {
     return null;
   }
@@ -105,6 +105,11 @@ function isDiagramLine(line, inDiagram = false) {
   if (/^(\+[-=+]+\+|[-=]{4,}|[|_]{4,})$/.test(trimmed)) {
     return true;
   }
+  // RFC diagrams often begin with a labeled horizontal border, such as
+  // "-------------- Customer ----------------".
+  if (/[-=]{4,}.*[-=]{4,}/.test(line)) {
+    return true;
+  }
   if (/[+\\][-=]+[+\\/]|<[-=]+>|[-=]+>|<[-=]+|\+--|--!?>|\|\s+[A-Za-z0-9]/.test(line)) {
     return true;
   }
@@ -132,11 +137,11 @@ function isTableLine(line) {
   return false;
 }
 
-function linkify(text) {
-  return text.replace(/(https?:\/\/[^\s\])>]+)([\])>]*)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>$2');
+function linksInText(text, links) {
+  return links.filter((link) => text.includes(link.text));
 }
 
-export function parseRfcText(rawText) {
+export function parseRfcText(rawText, links = []) {
   const lines = rawText.replace(/\r\n/g, '\n').split('\n');
   const blocks = [];
   let paragraphBuffer = [];
@@ -157,7 +162,7 @@ export function parseRfcText(rawText) {
       kind: 'paragraph',
       text,
       originalText: linesCopy.join('\n'),
-      html: linkify(text)
+      links: linksInText(text, links)
     });
   };
 

@@ -204,6 +204,56 @@ function groupedBlocks(rawBlocks) {
   return groups;
 }
 
+function appendParagraphContent(paragraph, text, links) {
+  const candidates = [...new Map(
+    links
+      .filter((link) => link.text && text.includes(link.text))
+      .map((link) => [`${link.text}\u0000${link.href}`, link])
+  ).values()];
+  let offset = 0;
+
+  while (offset < text.length) {
+    let match = null;
+    for (const link of candidates) {
+      const index = text.indexOf(link.text, offset);
+      if (index !== -1 && (!match || index < match.index || (index === match.index && link.text.length > match.link.text.length))) {
+        match = { index, link };
+      }
+    }
+
+    if (!match) {
+      paragraph.append(document.createTextNode(text.slice(offset)));
+      return;
+    }
+
+    if (match.index > offset) {
+      paragraph.append(document.createTextNode(text.slice(offset, match.index)));
+    }
+    const anchor = document.createElement('a');
+    anchor.href = match.link.href;
+    anchor.textContent = match.link.text;
+    paragraph.append(anchor);
+    offset = match.index + match.link.text.length;
+  }
+}
+
+function sourceLinks(source) {
+  const links = Array.from(source.querySelectorAll('a[href]'), (anchor) => ({
+    text: anchor.textContent.replace(/\s+/g, ' ').trim(),
+    href: anchor.href
+  })).filter((link) => link.text);
+
+  for (let index = 0; index < links.length - 1; index += 1) {
+    const current = links[index];
+    const next = links[index + 1];
+    if (current.text === 'RFC' && /^\d+$/.test(next.text) && current.href === next.href) {
+      links.push({ text: `RFC ${next.text}`, href: current.href });
+    }
+  }
+
+  return links;
+}
+
 function renderBlock(block, index, settings, persistParagraphMode, persistTableMode) {
   if (block.kind === 'pagebreak') {
     const wrap = document.createElement('div');
@@ -226,7 +276,8 @@ function renderBlock(block, index, settings, persistParagraphMode, persistTableM
     button.className = 'rev-affordance rev-paragraph-toggle';
 
     const applyParagraphMode = (mode) => {
-      p.textContent = mode ? block.text : block.originalText;
+      p.replaceChildren();
+      appendParagraphContent(p, mode ? block.text : block.originalText, block.links ?? []);
       p.classList.toggle('rev-prewrap', !mode);
       button.textContent = mode ? '\u21B5' : '\u00B6';
       button.title = mode ? 'Keep original line breaks' : 'Rewrap paragraph';
@@ -418,7 +469,7 @@ async function enhance(reason) {
   }
 
   const rawText = source.innerText;
-  const blocks = parseRfcText(rawText);
+  const blocks = parseRfcText(rawText, sourceLinks(source));
   const groups = groupedBlocks(blocks);
   debugLog('parsed rfc text', {
     chars: rawText.length,

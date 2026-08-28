@@ -36,6 +36,15 @@ test('parseHeading handles numbered, appendix, and unnumbered sections', () => {
     id: 'table-of-contents',
     text: 'Table of Contents'
   });
+
+  assert.equal(parseHeading('A small number of YANG modules'), null);
+  assert.deepEqual(parseHeading('Appendix A.  Examples'), {
+    app: 'A',
+    title: 'Examples',
+    level: 2,
+    id: 'appendix-a',
+    text: 'Appendix A.  Examples'
+  });
 });
 
 test('parseRfcText detects heading, paragraph, and pagebreak', () => {
@@ -62,6 +71,41 @@ Figure 1: The Customer Service Models Used on the Interface between Customers an
   assert.equal(diagramBlocks.length, 1);
   assert.ok(diagramBlocks[0].text.includes('Customer'));
   assert.ok(diagramBlocks[0].text.includes('Network Operator'));
+});
+
+test('parseRfcText keeps a labeled diagram border in the diagram block', () => {
+  const input = `--------------       Customer        ----------------------
+           |              |    Service Model    |                      |
+           |   Customer   | <-----------------> |   Network Operator   |
+            --------------                       ----------------------`;
+  const [diagram] = parseRfcText(input).filter((block) => block.kind === 'pre' && block.role === 'diagram');
+
+  assert.ok(diagram.text.startsWith('--------------'));
+  assert.ok(diagram.text.includes('Network Operator'));
+});
+
+test('parseRfcText retains source link metadata for paragraphs', () => {
+  const [paragraph] = parseRfcText('See RFC 8049 for details.', [
+    { text: 'RFC 8049', href: 'https://www.rfc-editor.org/info/rfc8049/' }
+  ]);
+
+  assert.deepEqual(paragraph.links, [
+    { text: 'RFC 8049', href: 'https://www.rfc-editor.org/info/rfc8049/' }
+  ]);
+});
+
+test('parseRfcText prefers a complete RFC citation link over its fragments', () => {
+  const [paragraph] = parseRfcText('See RFC 8049 for details.', [
+    { text: 'RFC', href: 'https://www.rfc-editor.org/info/rfc8049/' },
+    { text: '8049', href: 'https://www.rfc-editor.org/info/rfc8049/' },
+    { text: 'RFC 8049', href: 'https://www.rfc-editor.org/info/rfc8049/' }
+  ]);
+
+  assert.deepEqual(paragraph.links, [
+    { text: 'RFC', href: 'https://www.rfc-editor.org/info/rfc8049/' },
+    { text: '8049', href: 'https://www.rfc-editor.org/info/rfc8049/' },
+    { text: 'RFC 8049', href: 'https://www.rfc-editor.org/info/rfc8049/' }
+  ]);
 });
 
 test('parseRfcText groups Table of Contents entries without breaking into paragraphs', () => {

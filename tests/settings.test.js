@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_SETTINGS, mergeSettings, normalizeCssWidth, resolvedContentWidth } from '../src/lib/settings.js';
+import { DEFAULT_SETTINGS, mergeSettings, normalizeCssWidth, pageStorageKey, resolvedContentWidth } from '../src/lib/settings.js';
 
 test('normalizeCssWidth allows supported CSS units', () => {
   assert.equal(normalizeCssWidth('68ch'), '68ch');
@@ -17,4 +17,15 @@ test('mergeSettings preserves defaults and nested maps', () => {
 test('resolvedContentWidth picks custom width when custom preset selected', () => {
   const settings = mergeSettings(DEFAULT_SETTINGS, { page: { widthPreset: 'custom', customWidth: '88ch' } });
   assert.equal(resolvedContentWidth(settings), '88ch');
+});
+
+test('pageStorageKey keeps enhanced-view state scoped to the RFC page path', () => {
+  assert.equal(
+    pageStorageKey('https://www.rfc-editor.org/info/rfc8309/?view=html#section-3'),
+    'rev.pageSettings:/info/rfc8309/'
+  );
+  assert.notEqual(
+    pageStorageKey('https://www.rfc-editor.org/info/rfc8309/'),
+    pageStorageKey('https://www.rfc-editor.org/info/rfc8049/')
+  );
 });
