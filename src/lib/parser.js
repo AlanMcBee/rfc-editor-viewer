@@ -1,3 +1,21 @@
+const UNNUMBERED_HEADINGS = new Set([
+  'abstract',
+  'status of this memo',
+  'copyright notice',
+  'table of contents',
+  'acknowledgements',
+  'acknowledgments',
+  'authors\' addresses',
+  'author\'s address',
+  'contributors',
+  'contributor\'s address',
+  'security considerations',
+  'iana considerations',
+  'references',
+  'full copyright statement',
+  'intellectual property'
+]);
+
 function isPageHeaderLine(line) {
   return /^\s*(RFC\s+\d+|Internet[- ]Draft|Request for Comments|\d{4}-\d{2}-\d{2})/i.test(line);
 }
@@ -7,19 +25,99 @@ function isPageFooterLine(line) {
 }
 
 function isBulletLine(line) {
-  return /^\s*([*\-+]|\d+\.)\s+/.test(line);
+  return /^\s*([*+\-]|\d+\.|\([a-z0-9]+\)|o)\s{1,3}\S+/i.test(line);
+}
+
+function matchNumberedHeading(line) {
+  const trimmed = line.trim();
+  const match = trimmed.match(/^(\d+(?:\.\d+)*)\.?\s{2,}(.+)$/);
+  if (!match) {
+    return null;
+  }
+  const num = match[1];
+  const title = match[2].trim();
+  // Ensure it's not a TOC entry with dot leaders and page number
+  if (/\.\s*\.\s*\.\s*\d+$/.test(title)) {
+    return null;
+  }
+  return {
+    num,
+    title,
+    level: Math.min(num.split('.').length + 1, 6),
+    id: `section-${num}`,
+    text: `${num}.  ${title}`
+  };
+}
+
+function matchAppendixHeading(line) {
+  const trimmed = line.trim();
+  const match = trimmed.match(/^(?:Appendix\s+)?([A-Z](?:\.\d+)*)\.?\s{1,}(.+)$/i);
+  if (!match) {
+    return null;
+  }
+  const app = match[1].toUpperCase();
+  const title = match[2].trim();
+  if (/\.\s*\.\s*\.\s*\d+$/.test(title)) {
+    return null;
+  }
+  return {
+    app,
+    title,
+    level: Math.min(app.split('.').length + 1, 6),
+    id: `appendix-${app.toLowerCase()}`,
+    text: `Appendix ${app}.  ${title}`
+  };
+}
+
+function matchUnnumberedHeading(line) {
+  const trimmed = line.trim();
+  const normalized = trimmed.toLowerCase();
+  if (UNNUMBERED_HEADINGS.has(normalized)) {
+    return {
+      title: trimmed,
+      level: 2,
+      id: slug(trimmed),
+      text: trimmed
+    };
+  }
+  return null;
+}
+
+export function parseHeading(line) {
+  return matchNumberedHeading(line) || matchAppendixHeading(line) || matchUnnumberedHeading(line);
 }
 
 function isHeadingLine(line) {
-  return /^\d+(\.\d+)*\s+\S+/.test(line.trim());
+  return parseHeading(line) !== null;
 }
 
-function headingLevel(line) {
-  const match = line.trim().match(/^(\d+(?:\.\d+)*)\s+/);
-  if (!match) {
-    return 2;
+function isTocLine(line) {
+  return /\.\s*\.\s*\.\s*\.\s*\d+\s*$/.test(line);
+}
+
+function isDiagramLine(line, inDiagram = false) {
+  const trimmed = line.trim();
+  if (!trimmed) {
+    return false;
   }
-  return Math.min(match[1].split('.').length + 1, 6);
+
+  // Box borders and ASCII connectors
+  if (/^(\+[-=+]+\+|[-=]{4,}|[|_]{4,})$/.test(trimmed)) {
+    return true;
+  }
+  if (/[+\\][-=]+[+\\/]|<[-=]+>|[-=]+>|<[-=]+|\+--|--\+|\|\s+[A-Za-z0-9]/.test(line)) {
+    return true;
+  }
+  if (/^\|\s*.*\s*\|$/.test(trimmed) && !trimmed.includes('  ')) {
+    return true;
+  }
+  if (inDiagram) {
+    // If we're already buffering a diagram, indented structural lines, labels, arrows or captions continue it
+    if (/^\s{2,}/.test(line) && (/[|:+<\->\\/]/.test(line) || /^Figure\s+\d+:/i.test(trimmed))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function isTableLine(line) {
@@ -27,20 +125,11 @@ function isTableLine(line) {
   if (!trimmed) {
     return false;
   }
-  if (/(\|.*\|)/.test(trimmed)) {
+  // True table delimiter rows: | col1 | col2 | or +---+---+
+  if (/^\|[^|]+\|[^|]+\|$/.test(trimmed) || /^\+[-+]+\+$/.test(trimmed)) {
     return true;
   }
-  return /^\+[-+]+\+$/.test(trimmed) || /\S+\s{2,}\S+\s{2,}\S+/.test(line);
-}
-
-function isAsciiArtLine(line) {
-  if (!line.trim()) {
-    return false;
-  }
-  if (isBulletLine(line) || isTableLine(line) || isHeadingLine(line)) {
-    return false;
-  }
-  return /^\S+\s{2,}\S+/.test(line) || /[+|\\/]{2,}/.test(line);
+  return false;
 }
 
 function linkify(text) {
@@ -51,22 +140,37 @@ export function parseRfcText(rawText) {
   const lines = rawText.replace(/\r\n/g, '\n').split('\n');
   const blocks = [];
   let paragraphBuffer = [];
+  let diagramBuffer = [];
   let tableBuffer = [];
+  let tocBuffer = [];
   let pendingFooter = null;
+  let inTocSection = false;
 
   const flushParagraph = () => {
     if (!paragraphBuffer.length) {
       return;
     }
-
     const linesCopy = paragraphBuffer;
     paragraphBuffer = [];
-
+    const text = linesCopy.join(' ');
     blocks.push({
       kind: 'paragraph',
-      text: linesCopy.join(' '),
+      text,
       originalText: linesCopy.join('\n'),
-      html: linkify(linesCopy.join(' '))
+      html: linkify(text)
+    });
+  };
+
+  const flushDiagram = () => {
+    if (!diagramBuffer.length) {
+      return;
+    }
+    const linesCopy = diagramBuffer;
+    diagramBuffer = [];
+    blocks.push({
+      kind: 'pre',
+      role: 'diagram',
+      text: linesCopy.join('\n')
     });
   };
 
@@ -74,61 +178,106 @@ export function parseRfcText(rawText) {
     if (!tableBuffer.length) {
       return;
     }
-
     const linesCopy = tableBuffer;
     tableBuffer = [];
-    blocks.push({ kind: 'table-pre', lines: linesCopy, text: linesCopy.join('\n') });
+    blocks.push({
+      kind: 'table-pre',
+      lines: linesCopy,
+      text: linesCopy.join('\n')
+    });
   };
 
-  for (const line of lines) {
-    const trimmed = line.trimEnd();
+  const flushToc = () => {
+    if (!tocBuffer.length) {
+      return;
+    }
+    const linesCopy = tocBuffer;
+    tocBuffer = [];
+    blocks.push({
+      kind: 'pre',
+      role: 'toc',
+      text: linesCopy.join('\n')
+    });
+  };
+
+  const flushAll = () => {
+    flushDiagram();
+    flushTable();
+    flushToc();
+    flushParagraph();
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i];
+    const trimmed = rawLine.trimEnd();
 
     if (isPageFooterLine(trimmed)) {
-      flushTable();
-      flushParagraph();
+      flushAll();
       pendingFooter = trimmed;
       continue;
     }
 
     if (isPageHeaderLine(trimmed) && pendingFooter) {
-      flushTable();
+      flushAll();
       blocks.push({ kind: 'pagebreak', footer: pendingFooter, header: trimmed });
       pendingFooter = null;
       continue;
     }
 
     if (!trimmed.trim()) {
-      flushTable();
-      flushParagraph();
+      if (diagramBuffer.length && i + 1 < lines.length && isDiagramLine(lines[i + 1], true)) {
+        // Keep empty line inside multi-line diagram if next line continues diagram
+        diagramBuffer.push(rawLine);
+      } else {
+        flushAll();
+      }
       continue;
     }
 
-    if (isHeadingLine(trimmed)) {
-      flushTable();
-      flushParagraph();
-      blocks.push({ kind: 'heading', level: headingLevel(trimmed), text: trimmed.trim(), id: slug(trimmed.trim()) });
+    const heading = parseHeading(trimmed);
+    if (heading) {
+      flushAll();
+      inTocSection = heading.id === 'table-of-contents';
+      blocks.push({
+        kind: 'heading',
+        level: heading.level,
+        text: heading.text,
+        id: heading.id
+      });
       continue;
     }
 
-    if (isAsciiArtLine(trimmed) || isBulletLine(trimmed)) {
-      flushTable();
+    if (inTocSection && isTocLine(trimmed)) {
       flushParagraph();
-      blocks.push({ kind: 'pre', role: isAsciiArtLine(trimmed) ? 'diagram' : 'bullet', text: trimmed });
+      flushDiagram();
+      flushTable();
+      tocBuffer.push(rawLine);
       continue;
     }
 
     if (isTableLine(trimmed)) {
       flushParagraph();
-      tableBuffer.push(trimmed);
+      flushDiagram();
+      flushToc();
+      tableBuffer.push(rawLine);
       continue;
     }
 
+    if (isDiagramLine(rawLine, diagramBuffer.length > 0)) {
+      flushParagraph();
+      flushTable();
+      flushToc();
+      diagramBuffer.push(rawLine);
+      continue;
+    }
+
+    flushDiagram();
     flushTable();
+    flushToc();
     paragraphBuffer.push(trimmed.trim());
   }
 
-  flushTable();
-  flushParagraph();
+  flushAll();
 
   return blocks;
 }

@@ -57,10 +57,11 @@ async function savePageSettings(partialPage) {
   await chrome.storage.local.set({ [key]: { page: next.page } });
 }
 
-function createToolbar(settings, applyWidth) {
+function createToolbar(settings, applyWidth, toggleNav) {
   const toolbar = document.createElement('div');
   toolbar.className = 'rev-toolbar';
   toolbar.innerHTML = `
+    <button type="button" class="rev-nav-toggle" aria-expanded="false" aria-label="Toggle Table of Contents">Contents</button>
     <label>Width
       <select class="rev-width-select">
         <option value="65ch">65ch</option>
@@ -78,6 +79,8 @@ function createToolbar(settings, applyWidth) {
 
   const select = toolbar.querySelector('.rev-width-select');
   const custom = toolbar.querySelector('.rev-width-custom');
+  const navBtn = toolbar.querySelector('.rev-nav-toggle');
+
   select.value = settings.page.widthPreset;
   custom.value = settings.page.customWidth;
 
@@ -92,7 +95,50 @@ function createToolbar(settings, applyWidth) {
     applyWidth();
   });
 
+  if (navBtn && toggleNav) {
+    navBtn.addEventListener('click', () => {
+      toggleNav();
+    });
+  }
+
   return toolbar;
+}
+
+function createSubstituteNav(groups, onNavigate) {
+  const nav = document.createElement('nav');
+  nav.className = 'rev-nav rev-nav-drawer rev-hidden';
+  nav.setAttribute('aria-label', 'Table of Contents');
+
+  const title = document.createElement('div');
+  title.className = 'rev-nav-title';
+  title.textContent = 'Table of Contents';
+  nav.append(title);
+
+  const list = document.createElement('ul');
+  list.className = 'rev-nav-list';
+
+  groups.forEach((group) => {
+    if (!group.heading) {
+      return;
+    }
+    const li = document.createElement('li');
+    li.className = `rev-nav-item rev-nav-level-${group.heading.level}`;
+
+    const a = document.createElement('a');
+    a.href = `#${group.heading.id}`;
+    a.textContent = group.heading.text;
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      history.pushState(null, '', `#${group.heading.id}`);
+      onNavigate(group.heading.id);
+    });
+
+    li.append(a);
+    list.append(li);
+  });
+
+  nav.append(list);
+  return nav;
 }
 
 function visibleNavWidth() {
@@ -269,11 +315,27 @@ async function processPage() {
     return;
   }
 
+<<<<<<< Updated upstream
   await whenLoaded();
   await whenSettled(source);
   debugLog('page settled, parsing content');
 
   const blocks = parseRfcText(source.innerText);
+=======
+  // Read plain text before non-destructively hiding original content & nav
+  const rawText = source.innerText;
+  source.classList.add('rev-original-hidden');
+
+  const nativeNavs = document.querySelectorAll('nav:not(.rev-nav), #sidebar, .sidebar');
+  nativeNavs.forEach((el) => el.classList.add('rev-original-hidden'));
+
+  const existingRoot = document.querySelector(`.${ROOT_CLASS}`);
+  if (existingRoot) {
+    existingRoot.remove();
+  }
+
+  const blocks = parseRfcText(rawText);
+>>>>>>> Stashed changes
   const groups = groupedBlocks(blocks);
   debugLog('parsed blocks', { blocks: blocks.length, groups: groups.length });
   const exportBlocks = [];
@@ -285,14 +347,45 @@ async function processPage() {
 
   const applyWidth = async () => {
     const fresh = await getSettings();
-    const navWidth = visibleNavWidth();
     root.style.setProperty('--rev-width', resolvedContentWidth(fresh));
-    root.style.setProperty('--rev-nav-offset', `${navWidth}px`);
+    root.style.setProperty('--rev-nav-offset', '0px');
     root.style.setProperty('--rev-font', fresh.page.typeface || 'system-ui');
   };
 
-  const toolbar = createToolbar(settings, applyWidth);
+  const scrollToAnchor = (id) => {
+    if (!id) {
+      return;
+    }
+    const cleanId = id.replace(/^#/, '');
+    const el = document.getElementById(cleanId);
+    if (el) {
+      const section = el.closest('.rev-section');
+      if (section) {
+        collapseSection(section, false);
+      }
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
+  let substituteNav = null;
+  const toggleNav = () => {
+    if (!substituteNav) {
+      return;
+    }
+    const isHidden = substituteNav.classList.toggle('rev-hidden');
+    const navBtn = toolbar.querySelector('.rev-nav-toggle');
+    if (navBtn) {
+      navBtn.setAttribute('aria-expanded', String(!isHidden));
+    }
+  };
+
+  const toolbar = createToolbar(settings, applyWidth, toggleNav);
   root.append(toolbar);
+
+  substituteNav = createSubstituteNav(groups, (targetId) => {
+    scrollToAnchor(targetId);
+  });
+  root.append(substituteNav);
 
   const persistParagraphMode = async (key, mode) => {
     await savePageSettings({ paragraphModes: { [key]: mode } });
@@ -347,10 +440,39 @@ async function processPage() {
     root.append(section);
   });
 
+<<<<<<< Updated upstream
   source.replaceChildren(root);
   debugLog('rendered enhanced content');
+=======
+  source.after(root);
+>>>>>>> Stashed changes
   await applyWidth();
   window.addEventListener('resize', applyWidth);
+
+  root.addEventListener('click', (e) => {
+    const link = e.target.closest('a[href^="#"]');
+    if (link) {
+      const href = link.getAttribute('href');
+      if (href && href.startsWith('#')) {
+        e.preventDefault();
+        const targetId = href.slice(1);
+        history.pushState(null, '', href);
+        scrollToAnchor(targetId);
+      }
+    }
+  });
+
+  window.addEventListener('hashchange', () => {
+    if (location.hash) {
+      scrollToAnchor(location.hash);
+    }
+  });
+
+  if (location.hash) {
+    setTimeout(() => {
+      scrollToAnchor(location.hash);
+    }, 100);
+  }
 
   toolbar.querySelector('.rev-collapse-all')?.addEventListener('click', async () => {
     const updates = {};
