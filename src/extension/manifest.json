@@ -7,8 +7,7 @@
   "permissions": ["storage", "activeTab", "scripting"],
   "host_permissions": ["https://www.rfc-editor.org/*"],
   "action": {
-    "default_title": "RFC Viewer",
-    "default_popup": "popup.html"
+    "default_title": "RFC Viewer: toggle enhanced view"
   },
   "background": {
     "service_worker": "background.js"

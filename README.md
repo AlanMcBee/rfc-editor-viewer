@@ -34,4 +34,4 @@ npm run build
 ## Packaging notes
 
 - Uses npm-managed dependencies so Dependabot can monitor updates.
-- Manifest is MV3 and includes options/popup for store-readiness groundwork.
+- Manifest is MV3; clicking the toolbar icon toggles the enhanced view, and an options page holds global defaults.

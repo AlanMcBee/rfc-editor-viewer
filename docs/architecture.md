@@ -6,6 +6,6 @@
 - `src/extension/content-script.js`: page transformation, keyboard-accessible controls, persistence.
 - `src/extension/background.js`: badge/error signaling.
 - `src/extension/options.js`: global settings and feature flag editor.
-- `src/extension/popup.js`: quick page actions.
+- Toolbar icon click: toggles the enhanced view on/off for the current page.
 
 All state is local (`chrome.storage.local`) and can be extended later to remote sync.

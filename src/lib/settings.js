@@ -14,6 +14,7 @@ export const DEFAULT_SETTINGS = {
     exportTools: true
   },
   page: {
+    enhanced: true,
     widthPreset: '72ch',
     customWidth: '72ch',
     typeface: 'system-ui',
