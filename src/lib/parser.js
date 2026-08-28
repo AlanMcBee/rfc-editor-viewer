@@ -105,7 +105,7 @@ function isDiagramLine(line, inDiagram = false) {
   if (/^(\+[-=+]+\+|[-=]{4,}|[|_]{4,})$/.test(trimmed)) {
     return true;
   }
-  if (/[+\\][-=]+[+\\/]|<[-=]+>|[-=]+>|<[-=]+|\+--|--\+|\|\s+[A-Za-z0-9]/.test(line)) {
+  if (/[+\\][-=]+[+\\/]|<[-=]+>|[-=]+>|<[-=]+|\+--|--!?\+|\|\s+[A-Za-z0-9]/.test(line)) {
     return true;
   }
   if (/^\|\s*.*\s*\|$/.test(trimmed) && !trimmed.includes('  ')) {
