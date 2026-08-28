@@ -278,11 +278,17 @@ async function processPage() {
     return;
   }
 
+  await whenLoaded();
+  await whenSettled(source);
+  debugLog('page settled, parsing content');
+
   // Read plain text before non-destructively hiding original content & nav
   const rawText = source.innerText;
   source.classList.add('rev-original-hidden');
 
-  const nativeNavs = document.querySelectorAll('nav:not(.rev-nav), #sidebar, .sidebar');
+  // Scope to the page's own RFC table-of-contents nav only; a bare 'nav' selector
+  // also matches the site header/footer nav and hides them.
+  const nativeNavs = document.querySelectorAll('nav[aria-label^="In this RFC"], #sidebar, .sidebar');
   nativeNavs.forEach((el) => el.classList.add('rev-original-hidden'));
 
   const existingRoot = document.querySelector(`.${ROOT_CLASS}`);
