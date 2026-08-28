@@ -18,6 +18,7 @@ export const DEFAULT_SETTINGS = {
     widthPreset: '72ch',
     customWidth: '72ch',
     typeface: 'system-ui',
+    showPageBreaks: false,
     includeCollapsedInExport: true,
     includePageBreaksInExport: false,
     collapsedSections: {},
@@ -64,6 +65,7 @@ export function mergeSettings(base, override) {
       ...(override?.page ?? {}),
       widthPreset: override?.page?.widthPreset ?? base.page.widthPreset,
       customWidth: normalizeCssWidth(override?.page?.customWidth ?? base.page.customWidth),
+      showPageBreaks: override?.page?.showPageBreaks ?? base.page.showPageBreaks ?? false,
       collapsedSections: {
         ...base.page.collapsedSections,
         ...(override?.page?.collapsedSections ?? {})

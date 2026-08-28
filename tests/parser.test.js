@@ -94,7 +94,7 @@ test('parseRfcText retains source link metadata for paragraphs', () => {
   ]);
 });
 
-test('parseRfcText prefers a complete RFC citation link over its fragments', () => {
+test('parseRfcText excludes bare number fragments from links', () => {
   const [paragraph] = parseRfcText('See RFC 8049 for details.', [
     { text: 'RFC', href: 'https://www.rfc-editor.org/info/rfc8049/' },
     { text: '8049', href: 'https://www.rfc-editor.org/info/rfc8049/' },
@@ -103,7 +103,6 @@ test('parseRfcText prefers a complete RFC citation link over its fragments', () 
 
   assert.deepEqual(paragraph.links, [
     { text: 'RFC', href: 'https://www.rfc-editor.org/info/rfc8049/' },
-    { text: '8049', href: 'https://www.rfc-editor.org/info/rfc8049/' },
     { text: 'RFC 8049', href: 'https://www.rfc-editor.org/info/rfc8049/' }
   ]);
 });
@@ -127,4 +126,64 @@ test('parseRfcText groups Table of Contents entries without breaking into paragr
 test('buildAsciiTableRows parses simple pipe table', () => {
   const rows = buildAsciiTableRows(['| a | b |', '| c | d |']);
   assert.deepEqual(rows, [['a', 'b'], ['c', 'd']]);
+});
+
+test('parseRfcText keeps multi-line diagram captions and inner labels intact', () => {
+  const input = `   +--------------------+
+   | System Topology    |
+   +--------------------+
+             Customer Service Model
+   +--------------------+
+   | Operator Control   |
+   +--------------------+
+
+   Figure 3: Service Models Explained in an SDN Context
+             and Customer Service Model`;
+  const blocks = parseRfcText(input);
+  const diagramBlocks = blocks.filter((b) => b.kind === 'pre' && b.role === 'diagram');
+
+  assert.strictEqual(diagramBlocks.length, 1);
+  assert.ok(diagramBlocks[0].text.includes('Customer Service Model'));
+  assert.ok(diagramBlocks[0].text.includes('Figure 3: Service Models Explained'));
+  assert.ok(diagramBlocks[0].text.includes('and Customer Service Model'));
+});
+
+test('parseRfcText joins paragraphs across page breaks', () => {
+  const input = `   This is the first part of a long paragraph that spans
+   across a page boundary and continues on the next page.
+Wu, et al.                    Informational                     [Page 5]
+RFC 8309                Service Models Explained            January 2018
+   Here is the second part of the exact same paragraph continuing.`;
+  const blocks = parseRfcText(input);
+
+  const pb = blocks.find((b) => b.kind === 'pagebreak');
+  assert.ok(pb);
+
+  const paragraphs = blocks.filter((b) => b.kind === 'paragraph');
+  assert.strictEqual(paragraphs.length, 1);
+  assert.ok(paragraphs[0].text.includes('first part of a long paragraph'));
+  assert.ok(paragraphs[0].text.includes('second part of the exact same paragraph'));
+});
+
+test('parseRfcText detects bullet items, definitions, and blockquotes', () => {
+  const input = `   o  First bullet point paragraph.
+
+   Network Operator:  A company or organization that operates
+      one or more networks.
+
+         "This is a quoted block passage indented further."`;
+  const blocks = parseRfcText(input);
+
+  const bullet = blocks.find((b) => b.isBullet);
+  assert.ok(bullet);
+  assert.strictEqual(bullet.bulletMarker, 'o');
+  assert.ok(bullet.text.includes('First bullet point paragraph'));
+
+  const def = blocks.find((b) => b.isDefinition);
+  assert.ok(def);
+  assert.strictEqual(def.termName, 'Network Operator:');
+
+  const quote = blocks.find((b) => b.isQuote);
+  assert.ok(quote);
+  assert.ok(quote.text.includes('quoted block passage'));
 });

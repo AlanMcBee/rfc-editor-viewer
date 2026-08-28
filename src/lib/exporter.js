@@ -19,7 +19,14 @@ export function exportMarkdown({ title, sourceUrl, includeCollapsed, includePage
     }
 
     if (block.kind === 'paragraph') {
-      lines.push(block.exportText ?? block.text, '');
+      const text = block.exportText ?? block.text;
+      if (block.isBullet) {
+        lines.push(`- ${text}`, '');
+      } else if (block.isQuote) {
+        lines.push(`> ${text}`, '');
+      } else {
+        lines.push(text, '');
+      }
       continue;
     }
 
@@ -51,7 +58,16 @@ export function exportHtml({ title, sourceUrl, includeCollapsed, includePageBrea
     }
 
     if (block.kind === 'paragraph') {
-      out.push(`<p>${escapeHtml(block.exportText ?? block.text)}</p>`);
+      const content = escapeHtml(block.exportText ?? block.text);
+      if (block.isBullet) {
+        out.push(`<ul><li><p>${content}</p></li></ul>`);
+      } else if (block.isQuote) {
+        out.push(`<blockquote><p>${content}</p></blockquote>`);
+      } else if (block.isDefinition) {
+        out.push(`<div class="rev-term"><p>${content}</p></div>`);
+      } else {
+        out.push(`<p>${content}</p>`);
+      }
       continue;
     }
 

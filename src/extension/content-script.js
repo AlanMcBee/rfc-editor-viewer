@@ -96,6 +96,7 @@ function createToolbar(settings, applyWidth, toggleNav) {
       </select>
     </label>
     <input class="rev-width-custom" placeholder="72ch" aria-label="Custom width" />
+    <button type="button" class="rev-pagebreak-toggle">Page breaks: ${settings.page.showPageBreaks ? 'On' : 'Off'}</button>
     <button type="button" data-command="rev.collapseAll">Collapse all</button>
     <button type="button" data-command="rev.expandAll">Expand all</button>
     <details class="rev-menu">
@@ -113,6 +114,7 @@ function createToolbar(settings, applyWidth, toggleNav) {
   const select = toolbar.querySelector('.rev-width-select');
   const custom = toolbar.querySelector('.rev-width-custom');
   const navBtn = toolbar.querySelector('.rev-nav-toggle');
+  const pagebreakBtn = toolbar.querySelector('.rev-pagebreak-toggle');
 
   select.value = settings.page.widthPreset;
   custom.value = settings.page.customWidth;
@@ -129,6 +131,16 @@ function createToolbar(settings, applyWidth, toggleNav) {
   });
 
   navBtn.addEventListener('click', () => toggleNav());
+
+  pagebreakBtn.addEventListener('click', async () => {
+    const next = !(settings.page.showPageBreaks ?? false);
+    settings.page.showPageBreaks = next;
+    pagebreakBtn.textContent = `Page breaks: ${next ? 'On' : 'Off'}`;
+    await savePageSettings({ showPageBreaks: next });
+    state.root?.querySelectorAll('.rev-pagebreak').forEach((el) => {
+      el.classList.toggle('rev-hidden', !next);
+    });
+  });
 
   toolbar.addEventListener('click', (event) => {
     const command = event.target.closest('button[data-command]')?.dataset.command;
@@ -204,20 +216,56 @@ function groupedBlocks(rawBlocks) {
   return groups;
 }
 
-function appendParagraphContent(paragraph, text, links) {
+function isWordBoundary(text, index, length) {
+  if (index > 0) {
+    const charBefore = text[index - 1];
+    if (/\w/.test(charBefore) && /\w/.test(text[index])) {
+      return false;
+    }
+  }
+  const end = index + length;
+  if (end < text.length) {
+    const charAfter = text[end];
+    if (/\w/.test(text[end - 1]) && /\w/.test(charAfter)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function appendParagraphContent(paragraph, text, links, block = null) {
+  let termPrefixLength = 0;
+  if (block?.termName && text.startsWith(block.termName)) {
+    termPrefixLength = block.termName.length;
+  }
+
   const candidates = [...new Map(
     links
-      .filter((link) => link.text && text.includes(link.text))
+      .filter((link) => link.text && !/^\d+(\.\d+)*\.?$/.test(link.text) && text.includes(link.text))
       .map((link) => [`${link.text}\u0000${link.href}`, link])
   ).values()];
+
   let offset = 0;
+
+  if (termPrefixLength > 0) {
+    const strong = document.createElement('strong');
+    strong.textContent = text.slice(0, termPrefixLength);
+    paragraph.append(strong);
+    offset = termPrefixLength;
+  }
 
   while (offset < text.length) {
     let match = null;
     for (const link of candidates) {
-      const index = text.indexOf(link.text, offset);
-      if (index !== -1 && (!match || index < match.index || (index === match.index && link.text.length > match.link.text.length))) {
-        match = { index, link };
+      let index = text.indexOf(link.text, offset);
+      while (index !== -1) {
+        if (isWordBoundary(text, index, link.text.length)) {
+          if (!match || index < match.index || (index === match.index && link.text.length > match.link.text.length)) {
+            match = { index, link };
+          }
+          break;
+        }
+        index = text.indexOf(link.text, index + 1);
       }
     }
 
@@ -251,13 +299,16 @@ function sourceLinks(source) {
     }
   }
 
-  return links;
+  return links.filter((link) => !/^\d+(\.\d+)*\.?$/.test(link.text));
 }
 
 function renderBlock(block, index, settings, persistParagraphMode, persistTableMode) {
   if (block.kind === 'pagebreak') {
     const wrap = document.createElement('div');
     wrap.className = 'rev-pagebreak';
+    if (!settings.page.showPageBreaks) {
+      wrap.classList.add('rev-hidden');
+    }
     wrap.title = `${block.footer} | ${block.header}`;
     const line = document.createElement('hr');
     wrap.append(line);
@@ -267,35 +318,68 @@ function renderBlock(block, index, settings, persistParagraphMode, persistTableM
   if (block.kind === 'paragraph') {
     const wrapper = document.createElement('div');
     wrapper.className = 'rev-paragraph-wrap';
+    if (block.isDefinition) {
+      wrapper.classList.add('rev-term');
+    }
+    if (block.isQuote) {
+      wrapper.classList.add('rev-quote');
+    }
+
     const p = document.createElement('p');
     const key = `p${index}`;
-    const wrapped = settings.page.paragraphModes[key] ?? true;
+    const mode = settings.page.paragraphModes[key] ?? 'wrap';
 
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'rev-affordance rev-paragraph-toggle';
+    const group = document.createElement('div');
+    group.className = 'rev-affordance-group';
 
-    const applyParagraphMode = (mode) => {
+    const buttonWrap = document.createElement('button');
+    buttonWrap.type = 'button';
+    buttonWrap.className = 'rev-affordance rev-paragraph-toggle';
+
+    const buttonMono = document.createElement('button');
+    buttonMono.type = 'button';
+    buttonMono.className = 'rev-affordance rev-paragraph-mono-toggle';
+
+    const applyParagraphMode = (curMode) => {
       p.replaceChildren();
-      appendParagraphContent(p, mode ? block.text : block.originalText, block.links ?? []);
-      p.classList.toggle('rev-prewrap', !mode);
-      button.textContent = mode ? '\u21B5' : '\u00B6';
-      button.title = mode ? 'Keep original line breaks' : 'Rewrap paragraph';
-      button.setAttribute('aria-label', button.title);
-      button.setAttribute('aria-pressed', String(!mode));
+      const isMono = curMode === 'mono';
+      const isPre = curMode === 'prewrap';
+      const textToRender = curMode === 'wrap' ? block.text : block.originalText;
+
+      appendParagraphContent(p, textToRender, block.links ?? [], block);
+      p.classList.toggle('rev-prewrap', isPre);
+      p.classList.toggle('rev-pre-mono', isMono);
+
+      buttonWrap.textContent = isPre ? '\u21B5' : '\u00B6';
+      buttonWrap.title = isPre ? 'Rewrap paragraph' : 'Keep original line breaks';
+      buttonWrap.setAttribute('aria-label', buttonWrap.title);
+
+      buttonMono.textContent = isMono ? '\u2261' : '\u266F';
+      buttonMono.title = isMono ? 'Show standard text' : 'Show original monospace whitespace';
+      buttonMono.setAttribute('aria-label', buttonMono.title);
     };
 
-    applyParagraphMode(wrapped);
+    applyParagraphMode(mode);
 
-    button.addEventListener('click', async () => {
-      const next = !(settings.page.paragraphModes[key] ?? true);
+    buttonWrap.addEventListener('click', async () => {
+      const current = settings.page.paragraphModes[key] ?? 'wrap';
+      const next = current === 'prewrap' ? 'wrap' : 'prewrap';
       settings.page.paragraphModes[key] = next;
       applyParagraphMode(next);
       await persistParagraphMode(key, next);
     });
 
-    wrapper.append(button, p);
-    return { node: wrapper, exportBlock: { ...block, exportText: wrapped ? block.text : block.originalText } };
+    buttonMono.addEventListener('click', async () => {
+      const current = settings.page.paragraphModes[key] ?? 'wrap';
+      const next = current === 'mono' ? 'wrap' : 'mono';
+      settings.page.paragraphModes[key] = next;
+      applyParagraphMode(next);
+      await persistParagraphMode(key, next);
+    });
+
+    group.append(buttonWrap, buttonMono);
+    wrapper.append(group, p);
+    return { node: wrapper, exportBlock: { ...block, exportText: mode === 'wrap' ? block.text : block.originalText } };
   }
 
   if (block.kind === 'table-pre') {
@@ -527,8 +611,11 @@ async function enhance(reason) {
   const toolbar = createToolbar(settings, applyWidth, toggleNav);
   root.append(toolbar);
 
-  substituteNav = createSubstituteNav(groups, scrollToAnchor);
-  root.append(substituteNav);
+  substituteNav = createSubstituteNav(groups, (targetId) => {
+    scrollToAnchor(targetId);
+    toggleNav();
+  });
+  toolbar.append(substituteNav);
 
   const persistParagraphMode = (key, mode) => savePageSettings({ paragraphModes: { [key]: mode } });
   const persistTableMode = (key, mode) => savePageSettings({ tableModes: { [key]: mode } });
@@ -566,8 +653,28 @@ async function enhance(reason) {
     const body = document.createElement('div');
     body.className = 'rev-section-body';
 
+    let currentUl = null;
+
     group.blocks.forEach((block, idx) => {
-      const rendered = renderBlock(block, groupIndex * 10000 + idx, settings, persistParagraphMode, persistTableMode);
+      const globalIdx = groupIndex * 10000 + idx;
+
+      if (block.kind === 'paragraph' && block.isBullet) {
+        if (!currentUl) {
+          currentUl = document.createElement('ul');
+          currentUl.className = 'rev-bullet-list';
+          body.append(currentUl);
+        }
+        const li = document.createElement('li');
+        const rendered = renderBlock(block, globalIdx, settings, persistParagraphMode, persistTableMode);
+        li.append(rendered.node);
+        currentUl.append(li);
+        exportBlocks.push({ ...rendered.exportBlock, sectionKey: section.dataset.sectionKey });
+        return;
+      }
+
+      currentUl = null;
+
+      const rendered = renderBlock(block, globalIdx, settings, persistParagraphMode, persistTableMode);
       body.append(rendered.node);
       exportBlocks.push({ ...rendered.exportBlock, sectionKey: section.dataset.sectionKey });
     });
