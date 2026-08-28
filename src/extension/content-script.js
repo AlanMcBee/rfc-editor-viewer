@@ -5,6 +5,43 @@ import { debugLog } from '../lib/debug.js';
 
 const ROOT_CLASS = 'rev-root';
 
+// rfc-editor.org is a Vue SSR app: mutating its DOM before hydration finishes gets patched away.
+function whenSettled(target, { quietMs = 250, timeoutMs = 5000 } = {}) {
+  return new Promise((resolve) => {
+    let quietTimer;
+
+    const finish = () => {
+      observer.disconnect();
+      clearTimeout(quietTimer);
+      clearTimeout(hardStop);
+      resolve();
+    };
+
+    const observer = new MutationObserver(() => {
+      clearTimeout(quietTimer);
+      quietTimer = setTimeout(finish, quietMs);
+    });
+
+    const hardStop = setTimeout(() => {
+      debugLog('settle wait hit timeout', { timeoutMs });
+      finish();
+    }, timeoutMs);
+
+    observer.observe(target, { childList: true, subtree: true, characterData: true });
+    quietTimer = setTimeout(finish, quietMs);
+  });
+}
+
+function whenLoaded() {
+  if (document.readyState === 'complete') {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    window.addEventListener('load', () => resolve(), { once: true });
+  });
+}
+
 async function getSettings() {
   const key = pageStorageKey(location.href);
   const values = await chrome.storage.local.get([STORAGE_KEYS.GLOBAL, key]);
