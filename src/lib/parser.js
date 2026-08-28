@@ -95,7 +95,7 @@ function isTocLine(line) {
   return /\.\s*\.\s*\.\s*\.\s*\d+\s*$/.test(line);
 }
 
-function isDiagramLine(line, inDiagram = false) {
+function isDiagramStartLine(line) {
   const trimmed = line.trim();
   if (!trimmed) {
     return false;
@@ -113,12 +113,27 @@ function isDiagramLine(line, inDiagram = false) {
   if (/[+\\][-=]+[+\\/]|<[-=]+>|[-=]+>|<[-=]+|\+--|--!?>|\|\s+[A-Za-z0-9]/.test(line)) {
     return true;
   }
-  if (/^\|\s*.*\s*\|$/.test(trimmed) && !trimmed.includes('  ')) {
+  if (/^\|\s*.*\s*\|$/.test(trimmed)) {
     return true;
   }
+  return false;
+}
+
+function isDiagramLine(line, inDiagram = false) {
+  const trimmed = line.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  if (isDiagramStartLine(line)) {
+    return true;
+  }
+
   if (inDiagram) {
-    // If we're already buffering a diagram, indented structural lines, labels, arrows or captions continue it
-    if (/^\s{2,}/.test(line) && (/[|:+<\->\\/]/.test(line) || /^Figure\s+\d+:/i.test(trimmed))) {
+    if (/^\s*Figure\s+\d+[:.]/i.test(trimmed)) {
+      return true;
+    }
+    if (/^\s{2,}/.test(line)) {
       return true;
     }
   }
@@ -130,15 +145,22 @@ function isTableLine(line) {
   if (!trimmed) {
     return false;
   }
-  // True table delimiter rows: | col1 | col2 | or +---+---+
-  if (/^\|[^|]+\|[^|]+\|$/.test(trimmed) || /^\+[-+]+\+$/.test(trimmed)) {
+  // True table delimiter rows with multiple columns: | col1 | col2 | or +---+---+
+  if (/^\|[^|]+\|[^|]+\|$/.test(trimmed) || /^\+[-+]+\+[-+]+\+$/.test(trimmed)) {
     return true;
   }
   return false;
 }
 
 function linksInText(text, links) {
-  return links.filter((link) => text.includes(link.text));
+  return links.filter((link) => {
+    if (!link.text || /^\d+(\.\d+)*\.?$/.test(link.text)) {
+      return false;
+    }
+    const escaped = link.text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`(?:^|\\b|\\s)${escaped}(?:$|\\b|\\s)`, 'i');
+    return regex.test(text);
+  });
 }
 
 export function parseRfcText(rawText, links = []) {
@@ -157,13 +179,66 @@ export function parseRfcText(rawText, links = []) {
     }
     const linesCopy = paragraphBuffer;
     paragraphBuffer = [];
-    const text = linesCopy.join(' ');
-    blocks.push({
+
+    const firstLine = linesCopy[0];
+    const bulletMatch = firstLine.match(/^(\s{0,4})(([*+\-]|\d+\.|\([a-z0-9]+\)|o))\s{1,4}(\S.*)$/i);
+
+    let isBullet = false;
+    let bulletMarker = null;
+    let isDefinition = false;
+    let termName = null;
+    let isQuote = false;
+
+    const nonBlankLines = linesCopy.filter((l) => l.trim().length > 0);
+    const indents = nonBlankLines.map((l) => {
+      const m = l.match(/^(\s*)/);
+      return m ? m[1].length : 0;
+    });
+    const minIndent = indents.length ? Math.min(...indents) : 0;
+
+    if (bulletMatch) {
+      isBullet = true;
+      bulletMarker = bulletMatch[2];
+      linesCopy[0] = bulletMatch[1] + bulletMatch[4];
+    } else {
+      const termMatch = firstLine.match(/^(\s{0,4})([A-Z][A-Za-z0-9_\s\-/'"()]+:)(\s+|$)(.*)/);
+      const hangingIndent = linesCopy.length > 1 && indents[0] <= 4 && indents.slice(1).every((ind) => ind >= 6);
+
+      if (termMatch && !/^\s*Figure\s+\d+:/i.test(firstLine)) {
+        isDefinition = true;
+        termName = termMatch[2];
+      } else if (hangingIndent) {
+        isDefinition = true;
+      } else if (minIndent >= 6) {
+        isQuote = true;
+      }
+    }
+
+    const text = linesCopy.map((l) => l.trim()).join(' ');
+    const originalText = linesCopy.join('\n');
+
+    const block = {
       kind: 'paragraph',
       text,
-      originalText: linesCopy.join('\n'),
+      originalText,
       links: linksInText(text, links)
-    });
+    };
+
+    if (isBullet) {
+      block.isBullet = true;
+      block.bulletMarker = bulletMarker;
+    }
+    if (isDefinition) {
+      block.isDefinition = true;
+      if (termName) {
+        block.termName = termName;
+      }
+    }
+    if (isQuote) {
+      block.isQuote = true;
+    }
+
+    blocks.push(block);
   };
 
   const flushDiagram = () => {
@@ -217,25 +292,37 @@ export function parseRfcText(rawText, links = []) {
     const trimmed = rawLine.trimEnd();
 
     if (isPageFooterLine(trimmed)) {
-      flushAll();
+      flushDiagram();
+      flushTable();
+      flushToc();
       pendingFooter = trimmed;
       continue;
     }
 
     if (isPageHeaderLine(trimmed) && pendingFooter) {
-      flushAll();
+      flushDiagram();
+      flushTable();
+      flushToc();
       blocks.push({ kind: 'pagebreak', footer: pendingFooter, header: trimmed });
       pendingFooter = null;
       continue;
     }
 
     if (!trimmed.trim()) {
-      if (diagramBuffer.length && i + 1 < lines.length && isDiagramLine(lines[i + 1], true)) {
-        // Keep empty line inside multi-line diagram if next line continues diagram
-        diagramBuffer.push(rawLine);
-      } else {
-        flushAll();
+      if (diagramBuffer.length) {
+        let upcomingIsDiagram = false;
+        for (let j = i + 1; j < lines.length; j++) {
+          if (lines[j].trim()) {
+            upcomingIsDiagram = isDiagramLine(lines[j], true);
+            break;
+          }
+        }
+        if (upcomingIsDiagram) {
+          diagramBuffer.push(rawLine);
+          continue;
+        }
       }
+      flushAll();
       continue;
     }
 
@@ -268,7 +355,31 @@ export function parseRfcText(rawText, links = []) {
       continue;
     }
 
-    if (isDiagramLine(rawLine, diagramBuffer.length > 0)) {
+    if (diagramBuffer.length > 0) {
+      const isCaptionLine = /^\s*Figure\s+\d+[:.]/i.test(trimmed);
+      const hasCaption = diagramBuffer.some((l) => /^\s*Figure\s+\d+[:.]/i.test(l.trim()));
+
+      if (isCaptionLine) {
+        diagramBuffer.push(rawLine);
+        continue;
+      }
+
+      if (hasCaption) {
+        if (/^\s{2,}\S/.test(rawLine) && !parseHeading(trimmed) && !isTableLine(trimmed)) {
+          diagramBuffer.push(rawLine);
+          continue;
+        } else {
+          flushDiagram();
+        }
+      } else if (isDiagramLine(rawLine, true)) {
+        diagramBuffer.push(rawLine);
+        continue;
+      } else {
+        flushDiagram();
+      }
+    }
+
+    if (isDiagramStartLine(rawLine)) {
       flushParagraph();
       flushTable();
       flushToc();
@@ -279,7 +390,7 @@ export function parseRfcText(rawText, links = []) {
     flushDiagram();
     flushTable();
     flushToc();
-    paragraphBuffer.push(trimmed.trim());
+    paragraphBuffer.push(rawLine);
   }
 
   flushAll();
